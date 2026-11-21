@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 !.env.template
+credentials.json
+token.json
+tokens/
 
 # Dependencies
 .venv/
