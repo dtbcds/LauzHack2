@@ -1,6 +1,7 @@
 import flet as ft
 
 import palette
+from ask import ask_panel
 from board import task_board
 from component import Task, task_detail
 from demo_data import DEMO_ORGANISATIONS
@@ -24,20 +25,24 @@ def main(page: ft.Page):
     width = (page.width or 1280) - sidebar_width
     preferred_peek_width = None
     drag_origin: tuple[float, float] | None = None
+    active_task: Task | None = None
+    asking = False
+    ask_content = None
+    query_task_ids: set[str] = set()
     peek = ft.Container(
         top=0, right=0, bottom=0, bgcolor=palette.SURFACE,
         border=ft.Border(left=ft.BorderSide(1, palette.DIVIDER)), visible=False,
     )
     reserved_space = ft.Container(visible=False)
     backdrop = ft.Container(left=0, right=0, top=0, bottom=0, bgcolor="#66000000",
-                            visible=False, on_click=lambda _: board.select(None))
+                            visible=False, on_click=lambda _: close_peek())
     handle = ft.GestureDetector(
         ft.Container(
             ft.Container(width=2, height=24, bgcolor=palette.MUTED, border_radius=1),
             alignment=ft.Alignment.CENTER, bgcolor=ft.Colors.TRANSPARENT,
         ),
         width=12, top=0, bottom=0, visible=False, drag_interval=16,
-        mouse_cursor=ft.MouseCursor.RESIZE_LEFT_RIGHT, tooltip="Drag to resize task details",
+        mouse_cursor=ft.MouseCursor.RESIZE_LEFT_RIGHT, tooltip="Drag to resize side panel",
     )
 
     def layout_detail():
@@ -82,19 +87,69 @@ def main(page: ft.Page):
         width = event.width
         layout_detail()
 
-    def show_task(task: Task | None):
-        peek.visible = task is not None
-        peek.content = task_detail(task, board.select) if task else None
+    def refresh_peek():
+        peek.visible = asking or active_task is not None
+        if asking:
+            peek.content = ask_content
+        else:
+            peek.content = task_detail(active_task, board.select) if active_task else None
+        ask_button.style.bgcolor = palette.SELECTED if asking else palette.CONTROL
         layout_detail()
 
-    board = task_board(organisations[organisation], show_task)
+    def show_task(task: Task | None):
+        nonlocal active_task, asking
+        active_task = task
+        if task is not None and asking:
+            asking = False
+            board.highlight(set())
+        if not asking:
+            refresh_peek()
+
+    def close_peek():
+        nonlocal asking
+        board.dismiss_filters()
+        if asking:
+            asking = False
+            board.highlight(set())
+            refresh_peek()
+        else:
+            board.select(None)
+
+    def highlight_query(task_ids: set[str]):
+        nonlocal query_task_ids
+        query_task_ids = task_ids
+        if asking:
+            board.highlight(task_ids)
+
+    def toggle_ask(_):
+        nonlocal asking, ask_content
+        board.dismiss_filters()
+        if asking:
+            close_peek()
+            return
+        if ask_content is None:
+            ask_content = ask_panel(organisations[organisation], close_peek,
+                                    highlight_query, board.select)
+        asking = True
+        board.highlight(query_task_ids)
+        refresh_peek()
+
+    ask_button = ft.TextButton(
+        "Queries", icon=ft.Icons.QUERY_STATS, tooltip="Run a predefined dependency query",
+        style=palette.control_button_style(),
+        on_click=toggle_ask,
+    )
+    board = task_board(organisations[organisation], show_task, ask_button)
 
     def select_organisation(name: str):
-        nonlocal organisation
+        nonlocal organisation, asking, ask_content, query_task_ids
         if name == organisation:
             board.dismiss_filters()
             return
         organisation = name
+        asking = False
+        ask_content = None
+        query_task_ids = set()
         board.set_tasks(organisations[name])
         for item in org_buttons:
             item.selected = item.data == name
@@ -125,6 +180,8 @@ def main(page: ft.Page):
     def handle_keyboard(event: ft.KeyboardEvent):
         if event.key == "Escape":
             board.dismiss_filters()
+            if asking:
+                close_peek()
 
     page.on_keyboard_event = handle_keyboard
     layout_detail()
@@ -133,8 +190,11 @@ def main(page: ft.Page):
                vertical_alignment=ft.CrossAxisAlignment.STRETCH),
         backdrop, peek, handle,
     ], expand=True, fit=ft.StackFit.EXPAND, on_size_change=resize)
-    page.add(ft.Row([sidebar, workspace], spacing=0, expand=True,
-                    vertical_alignment=ft.CrossAxisAlignment.STRETCH))
+    page.add(ft.Container(
+        ft.Row([sidebar, workspace], spacing=0,
+               vertical_alignment=ft.CrossAxisAlignment.STRETCH),
+        expand=True, bgcolor=ft.Colors.TRANSPARENT, on_click=board.dismiss_filters,
+    ))
 
 
 if __name__ == "__main__":

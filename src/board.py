@@ -13,7 +13,7 @@ SORT_KEYS = {
     "People affected": lambda task: -task.affected_people,
     "Deadline": lambda task: task.deadline or "9999",
 }
-TOOLBAR_HEIGHT = 38
+TOOLBAR_HEIGHT = p.CONTROL_HEIGHT
 
 
 def visible_tasks(
@@ -42,10 +42,13 @@ class TaskBoard:
     select: Callable[[Task | None], None]
     dismiss_filters: Callable[[], None]
     set_tasks: Callable[[tuple[Task, ...]], None]
+    highlight: Callable[[set[str]], None]
 
 
-def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]) -> TaskBoard:
+def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None],
+               ask_button: ft.Control | None = None) -> TaskBoard:
     selected = None
+    highlighted: set[str] = set()
     compact = False
     narrow = False
     rows = ft.ListView(expand=True, spacing=0)
@@ -76,47 +79,15 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
         hint_text="Search tasks", prefix_icon=ft.Icons.SEARCH, width=240, **field_style,
     )
 
-    def menu(label, choices):
-        caption = ft.Text(next(iter(choices.values())), size=13, color=p.TEXT)
-        button = ft.PopupMenuButton(
-            tooltip=label, padding=0, data=next(iter(choices)),
-            content=ft.Container(
-                ft.Row([caption, ft.Icon(ft.Icons.EXPAND_MORE, size=16, color=p.MUTED)],
-                       spacing=p.SMALL, tight=True),
-                height=TOOLBAR_HEIGHT,
-                padding=ft.Padding.symmetric(horizontal=12), bgcolor=p.CONTROL,
-                border=ft.Border.all(1, p.DIVIDER), border_radius=5,
-            ),
-            **p.MENU_STYLE,
-        )
-
-        def choose(value):
-            button.data = value
-            caption.value = choices[value]
-            for item in button.items:
-                item.checked = item.data == value
-            render()
-
-        def replace_choices(new_choices):
-            nonlocal choices
-            choices = new_choices
-            if button.data not in choices:
-                button.data = next(iter(choices))
-            caption.value = choices[button.data]
-            button.items = [
-                p.menu_item(text, value, value == button.data, lambda _, key=value: choose(key))
-                for value, text in choices.items()
-            ]
-
-        replace_choices(choices)
-        return button, replace_choices
-
     def owner_choices(records):
         owners = sorted({task.owner for task in records if task.owner})
         return {"All": "All owners", **{name: name for name in owners}}
 
-    owner, replace_owners = menu("Filter by owner", owner_choices(tasks))
-    sort, _ = menu("Sort tasks", {key: key for key in SORT_KEYS})
+    owner, replace_owners = p.select_menu(
+        "Filter by owner", owner_choices(tasks), lambda: render(), value="All",
+    )
+    sort, _ = p.select_menu("Sort tasks", {key: key for key in SORT_KEYS},
+                            lambda: render(), value="Priority")
     flag_values = {"any": None, "yes": True, "no": False}
     flag = ft.SegmentedButton(
         selected=["any"], show_selected_icon=False,
@@ -176,6 +147,7 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
         width=244, top=0, right=0, visible=False, bgcolor=p.SURFACE,
         padding=p.SMALL, border=ft.Border.all(1, p.DIVIDER), border_radius=6,
         shadow=ft.BoxShadow(blur_radius=12, color="#55000000"),
+        on_click=lambda _: None,  # Keep taps in the popover from reaching the workspace.
     )
     dismiss_area = ft.Container(
         left=0, right=0, top=0, bottom=0, visible=False,
@@ -194,7 +166,7 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
     def dismiss_filters(_=None):
         set_filters_open(False)
 
-    search.on_focus = owner.on_open = sort.on_open = dismiss_filters
+    search.on_click = search.on_focus = owner.on_open = sort.on_open = dismiss_filters
 
     def clear_filters():
         for field in thresholds:
@@ -226,8 +198,8 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
             line([
                 ft.TextButton(
                     content=ft.Row([
-                        ft.Icon(ft.Icons.DESCRIPTION_OUTLINED, size=16, color=p.MUTED),
-                        ft.Text(task.title, size=13, color=p.TEXT, expand=True,
+                        ft.Text(task.title, size=13,
+                                color=p.ACCENT if task.id in highlighted else p.TEXT, expand=True,
                                 max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
                         *([ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, size=15, color=p.AMBER,
                                    tooltip="Bottleneck")] if compact and task.bottleneck else []),
@@ -251,11 +223,11 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
                     width=84, alignment=ft.Alignment.CENTER_LEFT,
                 ),
             ]),
-            height=42, bgcolor=p.SELECTED if active else None,
+            height=42, bgcolor=p.SELECTED if active else p.CONTROL if task.id in highlighted else None,
             ink=True, on_click=lambda _: select(task),
         )
 
-    def render(_=None):
+    def render(_=None, *, keep_selection=False):
         nonlocal selected
         bottleneck = flag_values[flag.selected[0]]
         shown = visible_tasks(
@@ -264,7 +236,7 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
             min_people=int(people.value or 0),
             bottleneck=bottleneck,
         )
-        if selected is not None and selected not in shown:
+        if not keep_selection and selected is not None and selected not in shown:
             selected = None
             on_select(None)
         lead = max((task for task in shown if task.bottleneck and task.downstream_count),
@@ -293,12 +265,18 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
         nonlocal selected
         selected = task
         on_select(task)
-        render()
+        render(keep_selection=True)
+
+    def highlight(task_ids: set[str]):
+        nonlocal highlighted
+        highlighted = task_ids
+        render(keep_selection=True)
 
     def set_tasks(records):
         nonlocal tasks, selected
         tasks = records
         selected = None
+        highlighted.clear()
         dismiss_filters()
         replace_owners(owner_choices(records))
         on_select(None)
@@ -312,8 +290,6 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
         for label, width in (("Task", None), ("Owner", 62), ("Deadline", 122),
                              ("Priority", 50), ("Downstream", 76), ("Flag", 84))
     ]
-    headers[0].expand = None
-    headers[0] = ft.Container(headers[0], expand=True, padding=ft.Padding.only(left=24))
     header_row = divider_row(line(headers), height=34)
 
     def resize(event: ft.LayoutSizeChangeEvent):
@@ -332,8 +308,12 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
     control = ft.Container(
         ft.Column([
             ft.Text("Tasks", size=36, weight=ft.FontWeight.W_700, color=p.TEXT),
-            ft.Row([ft.Icon(ft.Icons.VIEW_LIST_OUTLINED, size=16, color=p.ACCENT),
-                    ft.Text("List", size=13, color=p.TEXT)], spacing=p.SMALL),
+            ft.Row([
+                ft.Icon(ft.Icons.VIEW_LIST_OUTLINED, size=16, color=p.ACCENT),
+                ft.Text("List", size=13, color=p.TEXT),
+                ft.Container(expand=True),
+                *([ask_button] if ask_button is not None else []),
+            ], spacing=p.SMALL),
             toolbar,
             ft.Stack([
                 ft.Column([
@@ -350,4 +330,4 @@ def task_board(tasks: tuple[Task, ...], on_select: Callable[[Task | None], None]
         on_size_change=resize,
     )
     render()
-    return TaskBoard(control, select, dismiss_filters, set_tasks)
+    return TaskBoard(control, select, dismiss_filters, set_tasks, highlight)

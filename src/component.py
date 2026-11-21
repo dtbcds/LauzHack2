@@ -52,15 +52,15 @@ def task_detail(task: Task, close) -> ft.Column:
 
     def section(title, *controls):
         return ft.Column(
-            [ft.Text(title, size=17, color=palette.TEXT, weight=ft.FontWeight.W_600), *controls],
+            [ft.Text(title, size=palette.SECTION_TITLE, color=palette.TEXT, weight=ft.FontWeight.W_600), *controls],
             spacing=palette.SMALL,
         )
 
     def body(value, *, italic=False):
-        return ft.Text(value, size=14, color=palette.TEXT, italic=italic)
+        return ft.Text(value, size=palette.BODY_TEXT, color=palette.TEXT, italic=italic)
 
     def note(value):
-        return ft.Text(value, size=12, color=palette.MUTED)
+        return ft.Text(value, size=palette.NOTE_TEXT, color=palette.MUTED)
 
     def dependency_group(label, titles):
         return ft.Column([note(label), body("\n".join(titles) or "None")], spacing=4)
@@ -81,7 +81,7 @@ def task_detail(task: Task, close) -> ft.Column:
         for (name, maximum, description), points in zip(PRIORITY_FACTORS, task.score_breakdown)
     ]
     sections = [
-        ft.Text(task.title, size=28, weight=ft.FontWeight.W_700, color=palette.TEXT),
+        ft.Text(task.title, size=palette.PANE_TITLE, weight=ft.FontWeight.W_700, color=palette.TEXT),
         ft.Row(
             [
                 palette.tag(task.status.title()),
@@ -127,7 +127,6 @@ def task_detail(task: Task, close) -> ft.Column:
             ft.Container(
                 ft.Row(
                     [
-                        ft.Icon(ft.Icons.DESCRIPTION_OUTLINED, size=19, color=palette.MUTED),
                         ft.Container(expand=True),
                         ft.IconButton(
                             ft.Icons.CLOSE,

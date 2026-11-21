@@ -16,6 +16,12 @@ SMALL = 8
 MEDIUM = 16
 LARGE = 24
 GUTTER = 32
+CONTROL_HEIGHT = 38
+PANE_TITLE = 28
+SECTION_TITLE = 17
+BODY_TEXT = 14
+CONTROL_TEXT = 13
+NOTE_TEXT = 12
 
 MENU_STYLE = dict(
     bgcolor=SURFACE,
@@ -34,9 +40,58 @@ def menu_item(label, value, selected, on_click):
         checked=selected,
         height=32,
         padding=ft.Padding.symmetric(horizontal=SMALL),
-        label_text_style=ft.TextStyle(size=13, color=TEXT, weight=ft.FontWeight.W_400),
+        label_text_style=ft.TextStyle(size=CONTROL_TEXT, color=TEXT, weight=ft.FontWeight.W_400),
         on_click=on_click,
     )
+
+
+def control_button_style():
+    return ft.ButtonStyle(bgcolor=CONTROL, color=TEXT, shape=ft.RoundedRectangleBorder(radius=6))
+
+
+def select_menu(label, choices, on_change, *, value=None, expand=False):
+    caption = ft.Text(size=CONTROL_TEXT, color=TEXT)
+    if expand:
+        caption.expand = True
+        caption.max_lines = 1
+        caption.overflow = ft.TextOverflow.ELLIPSIS
+    button = ft.PopupMenuButton(
+        tooltip=label, padding=0, data=value,
+        content=ft.Container(
+            ft.Row([caption, ft.Icon(ft.Icons.EXPAND_MORE, size=16, color=MUTED)],
+                   spacing=SMALL, tight=not expand),
+            height=CONTROL_HEIGHT, padding=ft.Padding.symmetric(horizontal=12),
+            bgcolor=CONTROL, border=ft.Border.all(1, DIVIDER), border_radius=5,
+        ),
+        **MENU_STYLE,
+    )
+    if expand:
+        button.expand = True
+
+    def choose(key):
+        button.data = key
+        caption.value = choices[key]
+        caption.color = TEXT
+        button.tooltip = f"{label} · {choices[key]}"
+        for item in button.items:
+            item.checked = item.data == key
+        on_change()
+
+    def replace_choices(new_choices):
+        nonlocal choices
+        choices = new_choices
+        if button.data not in choices:
+            button.data = value if value in choices else None
+        caption.value = choices.get(button.data, label)
+        caption.color = TEXT if button.data is not None else MUTED
+        button.tooltip = f"{label} · {caption.value}" if button.data is not None else label
+        button.items = [
+            menu_item(text, key, key == button.data, lambda _, key=key: choose(key))
+            for key, text in choices.items()
+        ]
+
+    replace_choices(choices)
+    return button, replace_choices
 
 
 def tag(value: str, *, highlighted: bool = False) -> ft.Container:
