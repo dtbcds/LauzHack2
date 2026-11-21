@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Lock
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
+
+from app.coordinator.storage import SubmissionStore
 
 MAX_BODY_BYTES = 2_000_000
 SUBMISSION_FIELDS = {"project_id", "collection_id", "member_id", "events"}
@@ -41,14 +44,13 @@ def validate_submission(payload: Any) -> dict[str, Any]:
 
 
 class CoordinatorServer(ThreadingHTTPServer):
-    """Receive submissions in memory until SQLite storage is added."""
+    """Receive submissions and persist them in a local SQLite database."""
 
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int]):
+    def __init__(self, address: tuple[str, int], database_path: str | Path = "data/coordinator.sqlite3"):
+        self.store = SubmissionStore(database_path)
         super().__init__(address, CoordinatorHandler)
-        self.submissions: dict[tuple[str, str, str], dict[str, Any]] = {}
-        self.submissions_lock = Lock()
 
 
 class CoordinatorHandler(BaseHTTPRequestHandler):
@@ -91,9 +93,11 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
 
-        key = (payload["project_id"], payload["collection_id"], payload["member_id"])
-        with self.server.submissions_lock:
-            self.server.submissions[key] = payload
+        try:
+            self.server.store.save(payload)
+        except sqlite3.Error:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not save submission"})
+            return
         self._send_json(HTTPStatus.OK, {
             "received": True,
             "project_id": payload["project_id"],
@@ -106,8 +110,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the local coordinator JSON receiver")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--database", type=Path, default=Path("data/coordinator.sqlite3"))
     args = parser.parse_args()
-    with CoordinatorServer(("127.0.0.1", args.port)) as server:
+    with CoordinatorServer(("127.0.0.1", args.port), args.database) as server:
         print(f"Receiving at http://127.0.0.1:{server.server_port}/submissions")
         try:
             server.serve_forever()

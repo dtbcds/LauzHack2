@@ -1,9 +1,10 @@
-# Coordinator receiver: first local step
+# Coordinator receiver
 
 This is a small HTTP receiver for one employee's Calendar event JSON. It is
 bound to `127.0.0.1`, so only programs on the same computer can reach it. It
-does not use SQLite yet, accept remote employees, or run analysis. Submissions
-are held in memory and disappear when the process stops.
+does not yet accept remote employees or run analysis. Submissions are saved to
+`data/coordinator.sqlite3` by default, so they survive a restart. The `data/`
+directory is ignored by Git. Use `--database` to choose a different path.
 
 From the repository root, start it in one terminal:
 
@@ -27,7 +28,8 @@ curl -X POST http://127.0.0.1:8000/submissions \
 
 The response includes `"received": true` and `"event_count": 1`. The actual
 Calendar event JSON from the employee client can replace the sample `events`
-array. Stop the receiver with Ctrl+C.
+array. Repeating the same project, collection, and member replaces that
+member's saved snapshot. Stop the receiver with Ctrl+C.
 
 The contract is one JSON object with nonempty `project_id`, `collection_id`,
 and `member_id` strings plus an `events` array. Each event must have an `id`;
