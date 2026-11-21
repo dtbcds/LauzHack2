@@ -129,21 +129,36 @@ def ask_panel(
     deadline = ft.TextField(
         hint_text="YYYY-MM-DD",
         tooltip="Deadline",
-        expand=True,
-        height=p.CONTROL_HEIGHT,
-        dense=True,
         text_size=p.CONTROL_TEXT,
-        bgcolor=p.CONTROL,
-        border=p.INPUT_BORDER,
-        content_padding=ft.Padding.symmetric(horizontal=12),
-        text_vertical_align=ft.VerticalAlignment.CENTER,
+        collapsed=True,
+        border=ft.NoInputBorder(),
+        content_padding=0,
         on_change=inputs_changed,
     )
+
+    deadline_box = ft.Container(
+        deadline,
+        expand=True,
+        height=p.CONTROL_HEIGHT,
+        alignment=ft.Alignment.CENTER_LEFT,
+        padding=ft.Padding.symmetric(horizontal=12),
+        bgcolor=p.CONTROL,
+        border=ft.Border.all(1, p.DIVIDER),
+        border_radius=5,
+    )
+
+    def set_deadline_focus(focused: bool) -> None:
+        deadline_box.border = (
+            ft.Border.all(2, p.ACCENT) if focused else ft.Border.all(1, p.DIVIDER)
+        )
+
+    deadline.on_focus = lambda: set_deadline_focus(True)
+    deadline.on_blur = lambda: set_deadline_focus(False)
 
     owner_field = QueryField("Your name", owner, lambda: owner.data)
     task_field = QueryField("Task", task_choice, lambda: task_choice.data)
     deadline_field = QueryField(
-        "Deadline", deadline, lambda: (deadline.value or "").strip()
+        "Deadline", deadline_box, lambda: (deadline.value or "").strip()
     )
     teammate_field = QueryField("Teammate", teammate, lambda: teammate.data)
 
