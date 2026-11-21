@@ -1,0 +1,119 @@
+"""Local-only HTTP receiver for Calendar event submissions."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Lock
+from typing import Any
+from urllib.parse import urlsplit
+
+MAX_BODY_BYTES = 2_000_000
+SUBMISSION_FIELDS = {"project_id", "collection_id", "member_id", "events"}
+EVENT_FIELDS = {
+    "id", "member_id", "calendar_id", "summary", "description",
+    "start", "end", "organizer", "attendees",
+}
+
+
+def validate_submission(payload: Any) -> dict[str, Any]:
+    """Check the employee-to-coordinator JSON contract."""
+    if not isinstance(payload, dict):
+        raise ValueError("Submission must be a JSON object")
+    if extra := set(payload) - SUBMISSION_FIELDS:
+        raise ValueError(f"Unknown submission fields: {', '.join(sorted(extra))}")
+    for field in ("project_id", "collection_id", "member_id"):
+        if not isinstance(payload.get(field), str) or not payload[field].strip():
+            raise ValueError(f"{field} must be a non-empty string")
+    events = payload.get("events")
+    if not isinstance(events, list):
+        raise ValueError("events must be an array")
+    for index, event in enumerate(events):
+        if not isinstance(event, dict) or not isinstance(event.get("id"), str) or not event["id"]:
+            raise ValueError(f"events[{index}] must have an id")
+        if extra := set(event) - EVENT_FIELDS:
+            raise ValueError(f"events[{index}] has unknown fields: {', '.join(sorted(extra))}")
+        if event.get("member_id") not in (None, payload["member_id"]):
+            raise ValueError(f"events[{index}] has a different member_id")
+    return payload
+
+
+class CoordinatorServer(ThreadingHTTPServer):
+    """Receive submissions in memory until SQLite storage is added."""
+
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int]):
+        super().__init__(address, CoordinatorHandler)
+        self.submissions: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.submissions_lock = Lock()
+
+
+class CoordinatorHandler(BaseHTTPRequestHandler):
+    server: CoordinatorServer
+
+    def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:
+        if urlsplit(self.path).path == "/health":
+            self._send_json(HTTPStatus.OK, {"status": "ok"})
+        else:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Unknown route"})
+
+    def do_POST(self) -> None:
+        if urlsplit(self.path).path != "/submissions":
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Unknown route"})
+            return
+        if self.headers.get_content_type() != "application/json":
+            self._send_json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "Send application/json"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            length = 0
+        if length < 1:
+            self._send_json(HTTPStatus.LENGTH_REQUIRED, {"error": "Content-Length is required"})
+            return
+        if length > MAX_BODY_BYTES:
+            self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "JSON body is too large"})
+            return
+        try:
+            payload = validate_submission(json.loads(self.rfile.read(length)))
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+
+        key = (payload["project_id"], payload["collection_id"], payload["member_id"])
+        with self.server.submissions_lock:
+            self.server.submissions[key] = payload
+        self._send_json(HTTPStatus.OK, {
+            "received": True,
+            "project_id": payload["project_id"],
+            "collection_id": payload["collection_id"],
+            "member_id": payload["member_id"],
+            "event_count": len(payload["events"]),
+        })
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the local coordinator JSON receiver")
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
+    with CoordinatorServer(("127.0.0.1", args.port)) as server:
+        print(f"Receiving at http://127.0.0.1:{server.server_port}/submissions")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nStopped.")
+
+
+if __name__ == "__main__":
+    main()
