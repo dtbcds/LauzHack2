@@ -12,6 +12,7 @@ venv/
 dist/
 build/
 out/
+temp/*
 
 # Caches and generated files
 __pycache__/
