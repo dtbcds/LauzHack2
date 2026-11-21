@@ -1,0 +1,26 @@
+# Environment variables and local secrets
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Dependencies
+.venv/
+venv/
+
+# Build and test output
+dist/
+build/
+out/
+
+# Caches and generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Editor and IDE settings
+.vscode/*
+!.vscode/launch.json
