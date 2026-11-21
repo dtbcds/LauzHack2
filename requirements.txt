@@ -2,3 +2,8 @@ flet>=1.0
 ollama
 pydantic
 pytest
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+networkx
+winotify; sys_platform == "win32"
