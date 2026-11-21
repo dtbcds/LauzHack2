@@ -9,7 +9,7 @@ from filters import visible_tasks
 
 
 def test_filters_by_owner_and_query():
-    results = visible_tasks(TASKS, query="presentation", owner="Alex")
+    results = visible_tasks(TASKS, query="presentation", owner="You")
     assert [task.title for task in results] == ["Review presentation"]
 
 

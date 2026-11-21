@@ -113,7 +113,7 @@ def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]
 
     org_icons = {
         "Finance Operations": ft.Icons.ACCOUNT_BALANCE_OUTLINED,
-        "Product Operations": ft.Icons.INVENTORY_2_OUTLINED,
+        "Product Operations": ft.Icons.WIDGETS_OUTLINED,
     }
     org_buttons = []
 

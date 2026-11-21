@@ -76,18 +76,19 @@ def task_filters(tasks: tuple[Task, ...], on_change: Callable[[], None]) -> Task
 
     def owner_choices(records: tuple[Task, ...]) -> dict[str, str]:
         owners = sorted({task.owner for task in records if task.owner})
-        choices = {"All": "All owners"}
+        choices = {"You": "You", "All": "All owners"}
 
         for name in owners:
-            choices[name] = name
+            if name != "You":
+                choices[name] = name
 
         return choices
 
     owner, replace_owners = p.select_menu(
-        "Filter by owner",
+        "Person",
         owner_choices(tasks),
         on_change,
-        value="All",
+        value="You",
     )
 
     sort, _replace_sort_choices = p.select_menu(
