@@ -23,6 +23,8 @@ __pycache__/
 .coverage
 htmlcov/
 *.egg-info/
+models/
+runs/
 
 # Editor and IDE settings
 .vscode/*
