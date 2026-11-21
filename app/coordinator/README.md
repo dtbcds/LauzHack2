@@ -1,37 +1,81 @@
 # Coordinator receiver
 
-This is a small HTTP receiver for one employee's Calendar event JSON. It is
-bound to `127.0.0.1`, so only programs on the same computer can reach it. It
-does not yet accept remote employees or run analysis. Submissions are saved to
-`data/coordinator.sqlite3` by default, so they survive a restart. The `data/`
-directory is ignored by Git. Use `--database` to choose a different path.
+The coordinator accepts one employee's Calendar event JSON at `POST /submissions`
+and saves the latest snapshot for each project, collection, and member in SQLite.
+Google OAuth tokens stay on the employee's computer. The database defaults to
+`data/coordinator.sqlite3`; `data/` is ignored by Git.
 
-From the repository root, start it in one terminal:
+## Start on one computer
+
+From the repository root, create an upload secret for each member in the project:
+
+```sh
+python -m app.coordinator.members demo nils
+python -m app.coordinator.members demo dany
+python -m app.coordinator.members demo hatem
+```
+
+Give each person only their own printed secret. It is shown once and stored as a
+hash in the coordinator database. Running the command again for the same member
+rotates their secret and invalidates the old one. Use `--database` with both
+commands if the database is elsewhere.
+
+For a same-computer test, start the receiver:
 
 ```sh
 python -m app.coordinator.server
-```
-
-In a second terminal, check that it is running:
-
-```sh
 curl http://127.0.0.1:8000/health
 ```
 
-Then send one sample submission:
+To accept connections from other computers, use the coordinator's LAN IP and
+HTTPS. Create a short-lived, self-signed certificate that names that IP:
 
 ```sh
-curl -X POST http://127.0.0.1:8000/submissions \
-  -H 'Content-Type: application/json' \
-  --data '{"project_id":"demo","collection_id":"round-1","member_id":"nils","events":[{"id":"test-event","member_id":"nils"}]}'
+COORDINATOR_IP=192.168.1.42  # replace with this computer's LAN IP
+mkdir -p data
+umask 077
+openssl req -x509 -newkey rsa:2048 -noenc -sha256 -days 7 \
+  -keyout data/coordinator.key -out data/coordinator.crt \
+  -subj "/CN=$COORDINATOR_IP" -addext "subjectAltName=IP:$COORDINATOR_IP"
+python -m app.coordinator.server --host "$COORDINATOR_IP" \
+  --certfile data/coordinator.crt --keyfile data/coordinator.key
 ```
 
-The response includes `"received": true` and `"event_count": 1`. The actual
-Calendar event JSON from the employee client can replace the sample `events`
-array. Repeating the same project, collection, and member replaces that
-member's saved snapshot. Stop the receiver with Ctrl+C.
+Share **only** `data/coordinator.crt` with employees, alongside the coordinator
+IP, project ID, and each employee's own upload secret. Confirm the certificate
+came from the coordinator before trusting it. Keep `coordinator.key`
+on the coordinator. Every employee must be able to reach the IP on port 8000
+through the local network and firewall. The receiver refuses non-local listening
+without a certificate and private key.
+
+## Send a sample from an employee computer
+
+Save the shared certificate as `coordinator.crt` on that computer. Enter the
+member's secret without recording it in shell history:
+
+```sh
+read -r -s MEMBER_SECRET
+```
+
+Paste the secret and press Enter, then send a test event (change the IP and
+member ID to match the registered member):
+
+```sh
+printf 'header = "Authorization: Bearer %s"\n' "$MEMBER_SECRET" | \
+  curl --config - --cacert coordinator.crt \
+    -H 'Content-Type: application/json' \
+    --data '{"project_id":"demo","collection_id":"round-1","member_id":"dany","events":[{"id":"test-event","member_id":"dany"}]}' \
+    "https://192.168.1.42:8000/submissions"
+unset MEMBER_SECRET
+```
+
+The response includes `"received": true` and `"event_count": 1`. The employee
+client can later replace the sample `events` array with prepared Calendar events.
+Repeating the same project, collection, and member replaces that member's saved
+snapshot. Stop the receiver with Ctrl+C.
 
 The contract is one JSON object with nonempty `project_id`, `collection_id`,
 and `member_id` strings plus an `events` array. Each event must have an `id`;
 an event's `member_id`, if present, must match the outer `member_id`. The
+`Authorization: Bearer` secret must belong to that project and member. The
 receiver does not accept Google OAuth tokens.

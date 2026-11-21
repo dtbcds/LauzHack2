@@ -1,10 +1,11 @@
-"""Local-only HTTP receiver for Calendar event submissions."""
+"""HTTP(S) receiver for Calendar event submissions."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sqlite3
+import ssl
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -93,6 +94,20 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
 
+        authorization = self.headers.get("Authorization", "")
+        scheme, separator, secret = authorization.partition(" ")
+        try:
+            authorized = (bool(separator) and scheme.lower() == "bearer" and bool(secret)
+                          and self.server.store.is_authorized(
+                              payload["project_id"], payload["member_id"], secret
+                          ))
+        except sqlite3.Error:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not check member secret"})
+            return
+        if not authorized:
+            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Invalid member secret"})
+            return
+
         try:
             self.server.store.save(payload)
         except sqlite3.Error:
@@ -108,12 +123,29 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the local coordinator JSON receiver")
+    parser = argparse.ArgumentParser(description="Run the coordinator JSON receiver")
+    parser.add_argument("--host", default="127.0.0.1", help="Address to listen on (default: localhost)")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--database", type=Path, default=Path("data/coordinator.sqlite3"))
+    parser.add_argument("--certfile", type=Path, help="TLS certificate (required for remote access)")
+    parser.add_argument("--keyfile", type=Path, help="TLS private key (required for remote access)")
     args = parser.parse_args()
-    with CoordinatorServer(("127.0.0.1", args.port), args.database) as server:
-        print(f"Receiving at http://127.0.0.1:{server.server_port}/submissions")
+    if bool(args.certfile) != bool(args.keyfile):
+        parser.error("--certfile and --keyfile must be provided together")
+    if args.host not in ("127.0.0.1", "localhost") and not args.certfile:
+        parser.error("remote listening requires --certfile and --keyfile")
+
+    tls_context = None
+    if args.certfile:
+        tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        tls_context.load_cert_chain(args.certfile, args.keyfile)
+
+    with CoordinatorServer((args.host, args.port), args.database) as server:
+        if tls_context:
+            server.socket = tls_context.wrap_socket(server.socket, server_side=True)
+        scheme = "https" if tls_context else "http"
+        print(f"Receiving at {scheme}://{args.host}:{server.server_port}/submissions")
         try:
             server.serve_forever()
         except KeyboardInterrupt:
