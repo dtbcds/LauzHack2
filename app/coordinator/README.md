@@ -50,7 +50,8 @@ without a certificate and private key.
 
 ## Send a sample from an employee computer
 
-Save the shared certificate as `coordinator.crt` on that computer. Enter the
+Create `data/` if needed and save the shared certificate as
+`data/coordinator.crt` on that computer. Enter the
 member's secret without recording it in shell history:
 
 ```sh
@@ -62,15 +63,30 @@ member ID to match the registered member):
 
 ```sh
 printf 'header = "Authorization: Bearer %s"\n' "$MEMBER_SECRET" | \
-  curl --config - --cacert coordinator.crt \
+  curl --config - --cacert data/coordinator.crt \
     -H 'Content-Type: application/json' \
     --data '{"project_id":"demo","collection_id":"round-1","member_id":"dany","events":[{"id":"test-event","member_id":"dany"}]}' \
     "https://192.168.1.42:8000/submissions"
 unset MEMBER_SECRET
 ```
 
-The response includes `"received": true` and `"event_count": 1`. The employee
-client can later replace the sample `events` array with prepared Calendar events.
+To fetch and upload **your own actual Calendar events**, put the shared
+`credentials.json` OAuth client file on your computer and run:
+
+```sh
+python -m app.calendar.send_to_coordinator \
+  --project-id demo --collection-id round-1 --member-id dany \
+  --coordinator-url https://192.168.1.42:8000 \
+  --ca-cert data/coordinator.crt
+```
+
+Use your own member ID and the coordinator's real IP. The command prompts for
+your upload secret. Google may open a browser the first time to authorize your
+Calendar; the resulting Google token stays on your computer under `tokens/`.
+It fetches events from your primary calendar for the next 14 days by default.
+Use `--days-ahead` or `--calendar-id` to change that window or calendar.
+
+The response includes `"received": true` and `"event_count": 1` for the sample.
 Repeating the same project, collection, and member replaces that member's saved
 snapshot. Stop the receiver with Ctrl+C.
 
