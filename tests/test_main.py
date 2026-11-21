@@ -3,9 +3,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
-from board import visible_tasks
 from component import format_deadline
 from demo_data import FINANCE_TASKS as TASKS
+from filters import visible_tasks
 
 
 def test_filters_by_owner_and_query():

@@ -1,9 +1,9 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
 import flet as ft
 import palette
-
 
 PRIORITY_FACTORS = (
     ("Downstream impact", 40, "How much work depends on this task."),
@@ -35,11 +35,12 @@ class Task:
 def format_deadline(value: str | None) -> str:
     if value is None:
         return "Unknown deadline"
+
     return datetime.fromisoformat(value).strftime("%a, %d %b · %H:%M")
 
 
-def task_detail(task: Task, close) -> ft.Column:
-    def property_row(name, value, icon):
+def task_detail(task: Task, close: Callable[[Task | None], None]) -> ft.Column:
+    def property_row(name: str, value: str, icon: ft.IconData) -> ft.Row:
         return ft.Row(
             [
                 ft.Icon(icon, size=15, color=palette.MUTED),
@@ -50,45 +51,67 @@ def task_detail(task: Task, close) -> ft.Column:
             vertical_alignment=ft.CrossAxisAlignment.START,
         )
 
-    def section(title, *controls):
+    def section(title: str, *controls: ft.Control) -> ft.Column:
         return ft.Column(
-            [ft.Text(title, size=palette.SECTION_TITLE, color=palette.TEXT, weight=ft.FontWeight.W_600), *controls],
+            [
+                ft.Text(
+                    title,
+                    size=palette.SECTION_TITLE,
+                    color=palette.TEXT,
+                    weight=ft.FontWeight.W_600,
+                ),
+                *controls,
+            ],
             spacing=palette.SMALL,
         )
 
-    def body(value, *, italic=False):
+    def body(value: str, *, italic: bool = False) -> ft.Text:
         return ft.Text(value, size=palette.BODY_TEXT, color=palette.TEXT, italic=italic)
 
-    def note(value):
+    def note(value: str) -> ft.Text:
         return ft.Text(value, size=palette.NOTE_TEXT, color=palette.MUTED)
 
-    def dependency_group(label, titles):
+    def dependency_group(label: str, titles: tuple[str, ...]) -> ft.Column:
         return ft.Column([note(label), body("\n".join(titles) or "None")], spacing=4)
 
-    properties = [
+    properties: list[ft.Control] = [
         property_row("Owner", task.owner or "Unknown owner", ft.Icons.PERSON_OUTLINE),
-        property_row("Deadline", format_deadline(task.deadline), ft.Icons.EVENT_OUTLINED),
+        property_row(
+            "Deadline", format_deadline(task.deadline), ft.Icons.EVENT_OUTLINED
+        ),
     ]
     score_lines = [
         ft.Row(
             [
-                ft.Text(name, size=13, color=palette.MUTED, expand=True, tooltip=description),
-                ft.Text(f"{points} / {maximum}", size=13, width=48,
-                        text_align=ft.TextAlign.RIGHT, tooltip=description),
+                ft.Text(
+                    name, size=13, color=palette.MUTED, expand=True, tooltip=description
+                ),
+                ft.Text(
+                    f"{points} / {maximum}",
+                    size=13,
+                    width=48,
+                    text_align=ft.TextAlign.RIGHT,
+                    tooltip=description,
+                ),
             ],
             spacing=palette.SMALL,
         )
-        for (name, maximum, description), points in zip(PRIORITY_FACTORS, task.score_breakdown)
+        for (name, maximum, description), points in zip(
+            PRIORITY_FACTORS, task.score_breakdown
+        )
     ]
-    sections = [
-        ft.Text(task.title, size=palette.PANE_TITLE, weight=ft.FontWeight.W_700, color=palette.TEXT),
-        ft.Row(
-            [
-                palette.tag(task.status.title()),
-                *([palette.tag("Bottleneck", highlighted=True)] if task.bottleneck else []),
-            ],
-            spacing=palette.SMALL,
+    status: list[ft.Control] = [palette.tag(task.status.title())]
+    if task.bottleneck:
+        status.append(palette.tag("Bottleneck", highlighted=True))
+
+    sections: list[ft.Control] = [
+        ft.Text(
+            task.title,
+            size=palette.PANE_TITLE,
+            weight=ft.FontWeight.W_700,
+            color=palette.TEXT,
         ),
+        ft.Row(status, spacing=palette.SMALL),
         ft.Column(properties, spacing=10),
         section(
             "Dependency impact",
@@ -100,8 +123,10 @@ def task_detail(task: Task, close) -> ft.Column:
         ),
         section(
             f"Priority · {task.score} / 100",
-            note("The four weighted scores add up to the task’s priority. "
-                 "Higher scores rank first in priority order."),
+            note(
+                "The four weighted scores add up to the task’s priority. "
+                "Higher scores rank first in priority order."
+            ),
             *score_lines,
         ),
         ft.Divider(height=1, color=palette.DIVIDER),
@@ -113,7 +138,11 @@ def task_detail(task: Task, close) -> ft.Column:
         ),
     ]
     if task.evidence:
-        confidence = f"{task.confidence:.0%} confidence" if task.confidence is not None else "Confidence unavailable"
+        confidence = (
+            f"{task.confidence:.0%} confidence"
+            if task.confidence is not None
+            else "Confidence unavailable"
+        )
         sections.append(
             section(
                 "Dependency evidence",
@@ -133,17 +162,21 @@ def task_detail(task: Task, close) -> ft.Column:
                             tooltip="Close task",
                             icon_size=18,
                             icon_color=palette.MUTED,
-                            on_click=lambda _: close(None),
+                            on_click=lambda: close(None),
                         ),
                     ],
                 ),
-                padding=ft.Padding.only(left=palette.LARGE, right=palette.MEDIUM, top=palette.SMALL),
+                padding=ft.Padding.only(
+                    left=palette.LARGE, right=palette.MEDIUM, top=palette.SMALL
+                ),
             ),
             ft.ListView(
                 controls=sections,
                 expand=True,
                 spacing=palette.MEDIUM,
-                padding=ft.Padding.only(left=palette.LARGE, right=palette.LARGE, bottom=palette.LARGE),
+                padding=ft.Padding.only(
+                    left=palette.LARGE, right=palette.LARGE, bottom=palette.LARGE
+                ),
             ),
         ],
         spacing=0,
