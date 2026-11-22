@@ -60,7 +60,6 @@ def task_node(
     blocked_by: tuple[str, ...],
     selected: bool = False,
     highlighted: bool = False,
-    in_scope: bool = True,
 ) -> ft.Container:
     completed = task.status.casefold() in {"done", "complete", "completed"}
     status = "Ready"
@@ -74,7 +73,7 @@ def task_node(
         badges.append(p.tag("Bottleneck", highlighted=True))
 
     border_color = p.DIVIDER if completed else p.AMBER if blocked_by else p.MUTED
-    border_width = 2 if in_scope else 1
+    border_width = 2
 
     if task.bottleneck and not completed:
         border_color = p.BOTTLENECK
@@ -131,11 +130,11 @@ def dependency_link(
     highlighted: bool = False,
     blocking: bool = False,
     soft: bool = False,
+    horizontal: bool = False,
 ) -> list[canvas.Shape]:
-    """Join the shared bottom and top card edges, with a downward destination arrow."""
+    """Join task edges with a curved link and an arrow into the receiving node."""
     start_x, start_y = source
     end_x, end_y = target
-    bend = (start_y + end_y) / 2
     color = p.ACCENT if highlighted else p.BOTTLENECK if blocking else p.MUTED
     stroke = ft.Paint(color=color, stroke_width=1.5, style=ft.PaintingStyle.STROKE)
     if soft:
@@ -144,16 +143,23 @@ def dependency_link(
     elements: list[canvas.Path.PathElement] = [
         canvas.Path.MoveTo(start_x, start_y),
     ]
-    elements.append(
-        canvas.Path.CubicTo(start_x, bend, end_x, bend, end_x, end_y),
-    )
+    if horizontal:
+        bend = (start_x + end_x) / 2
+        elements.append(canvas.Path.CubicTo(bend, start_y, bend, end_y, end_x, end_y))
+        arrow_start = (end_x - 6, end_y - 4)
+        arrow_end = (end_x - 6, end_y + 4)
+    else:
+        bend = (start_y + end_y) / 2
+        elements.append(canvas.Path.CubicTo(start_x, bend, end_x, bend, end_x, end_y))
+        arrow_start = (end_x - 4, end_y - 6)
+        arrow_end = (end_x + 4, end_y - 6)
 
     path = canvas.Path(elements, paint=stroke)
     arrow = canvas.Path(
         [
-            canvas.Path.MoveTo(end_x - 4, end_y - 6),
+            canvas.Path.MoveTo(*arrow_start),
             canvas.Path.LineTo(end_x, end_y),
-            canvas.Path.LineTo(end_x + 4, end_y - 6),
+            canvas.Path.LineTo(*arrow_end),
         ],
         paint=ft.Paint(color=color, stroke_width=1.5, style=ft.PaintingStyle.STROKE),
     )

@@ -19,8 +19,12 @@ class SidePanel:
             expand=True, on_close=on_close,
         )
 
-    def wrap(self, board: ft.Control) -> ResizableWorkspace:
+    def wrap(
+        self, board: ft.Control, view_switch: ft.Control, *, sidebar_width: float,
+    ) -> ResizableWorkspace:
         self._workspace.content = board
+        self._workspace.overlay = view_switch
+        self._workspace.overlay_center_offset = sidebar_width / 2
 
         return self._workspace
 

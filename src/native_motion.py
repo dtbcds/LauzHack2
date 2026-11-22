@@ -13,9 +13,12 @@ class GraphViewport(ft.LayoutControl):
     scene_width: float = 1
     scene_height: float = 1
     node_height: float = 120
+    node_width: float = 208
+    horizontal: bool = True
     reset_token: int = 0
     zoom: float = 1
     scroll_top: float = 0
+    scroll_left: float = 0
 
 
 @ft.control("GraphToolbar")
@@ -34,6 +37,9 @@ class GraphGestureSurface(ft.LayoutControl):
 class ResizableWorkspace(ft.LayoutControl):
     content: ft.Control
     panel: ft.Control
+    overlay: ft.Control | None = None
+    overlay_width: float = 278
+    overlay_center_offset: float = 0
     panel_open: bool = False
     panel_width: float | None = None
     on_close: ft.ControlEventHandler | None = None

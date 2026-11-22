@@ -36,6 +36,8 @@ class _ResizableWorkspaceState extends State<ResizableWorkspace> {
         final minWidth = maxWidth < 280 ? maxWidth : 280.0;
         final defaultWidth = (workspaceWidth * 0.31).clamp(340.0, 460.0);
         _width = (_preferredWidth ?? defaultWidth).clamp(minWidth, maxWidth);
+        final overlay = control.buildWidget('overlay');
+        final overlayWidth = control.getDouble('overlay_width', 278)!;
 
         return Stack(
           fit: StackFit.expand,
@@ -47,6 +49,15 @@ class _ResizableWorkspaceState extends State<ResizableWorkspace> {
                 if (open && docked) SizedBox(width: _width),
               ],
             ),
+            if (overlay != null)
+              Positioned(
+                left:
+                    (workspaceWidth - overlayWidth) / 2 -
+                    control.getDouble('overlay_center_offset', 0)!,
+                top: 16,
+                width: overlayWidth,
+                child: overlay,
+              ),
             if (open && !docked)
               Positioned.fill(
                 child: GestureDetector(

@@ -70,8 +70,10 @@ def select_menu(
     *,
     value: str | None = None,
     expand: bool = False,
+    height: int = CONTROL_HEIGHT,
+    text_size: int = CONTROL_TEXT,
 ) -> tuple[ft.PopupMenuButton, Callable[[dict[str, str]], None]]:
-    caption = ft.Text(size=CONTROL_TEXT, color=TEXT)
+    caption = ft.Text(size=text_size, color=TEXT)
     if expand:
         caption.expand = True
         caption.max_lines = 1
@@ -87,7 +89,7 @@ def select_menu(
                 spacing=SMALL,
                 tight=not expand,
             ),
-            height=CONTROL_HEIGHT,
+            height=height,
             padding=ft.Padding.symmetric(horizontal=12),
             bgcolor=CONTROL,
             border=ft.Border.all(1, DIVIDER),

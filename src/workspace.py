@@ -167,24 +167,16 @@ def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]
         board.view_switch,
         width=board.view_switch.width,
         height=board.view_switch.height,
-        top=palette.MEDIUM,
     )
 
-    workspace = side_panel.wrap(board_surface)
+    workspace = side_panel.wrap(board_surface, switcher_surface, sidebar_width=sidebar_width)
 
     page.add(
         ft.Container(
-            ft.Stack(
-                [
-                    ft.Row(
-                        [sidebar, workspace],
-                        spacing=0,
-                        vertical_alignment=ft.CrossAxisAlignment.STRETCH,
-                    ),
-                    switcher_surface,
-                ],
-                fit=ft.StackFit.EXPAND,
-                alignment=ft.Alignment.TOP_CENTER,
+            ft.Row(
+                [sidebar, workspace],
+                spacing=0,
+                vertical_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
             expand=True,
             bgcolor=ft.Colors.TRANSPARENT,

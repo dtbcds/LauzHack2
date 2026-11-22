@@ -6,6 +6,11 @@ Graph gestures and side-panel resizing run in the custom Flutter client in
 `flutter_client/`. Python receives the settled graph transform and panel width;
 it handles data, filters, queries, and task selection.
 
+The graph opens horizontally, with prerequisites on the left and dependents on
+the right. Turn on **Vertical layout** to switch to vertical flow. Zoom stays bounded
+by the complete graph and the full breadth of each layer; scrolling follows the
+chosen axis.
+
 Build the client once with Flutter 3.47 or later and the Visual Studio C++ desktop
 toolchain installed:
 
