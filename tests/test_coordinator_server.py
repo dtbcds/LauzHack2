@@ -246,6 +246,43 @@ class CoordinatorServerTests(unittest.TestCase):
             self.assertEqual(state["result"], {"event_count": 0})
             self.assertIsNone(state["error"])
 
+    def test_uploads_remain_pending_while_analysis_is_disabled(self):
+        paused_path = Path(self.directory.name) / "paused.sqlite3"
+        payload = {
+            "project_id": "demo", "collection_id": "round-1", "member_id": "dany",
+            "events": [{"id": "event-1", "member_id": "dany"}],
+        }
+        with CoordinatorServer(("127.0.0.1", 0), paused_path, analyzer=None) as paused:
+            secret = paused.store.register_member("demo", "dany")
+            thread = threading.Thread(target=paused.serve_forever, daemon=True)
+            thread.start()
+            try:
+                request = Request(
+                    f"http://127.0.0.1:{paused.server_port}/submissions",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {secret}"},
+                    method="POST",
+                )
+                with urlopen(request, timeout=2) as response:
+                    self.assertEqual(json.load(response)["analysis_status"], "pending")
+            finally:
+                paused.shutdown()
+                thread.join(timeout=2)
+            self.assertEqual(paused.store.get_analysis("demo", "round-1")["status"], "pending")
+            self.assertEqual(paused.store.list_for_collection("demo", "round-1"), [payload])
+
+        with CoordinatorServer(
+            ("127.0.0.1", 0), paused_path,
+            analyzer=lambda submissions: {"event_count": sum(len(item["events"]) for item in submissions)},
+        ) as resumed:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                state = resumed.store.get_analysis("demo", "round-1")
+                if state and state["status"] == "ready":
+                    break
+                time.sleep(0.01)
+            self.assertEqual(state["result"], {"event_count": 1})
+
 
 if __name__ == "__main__":
     unittest.main()

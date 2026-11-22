@@ -32,3 +32,9 @@ when each analysis finishes or fails. For two or more tasks, Ollama must be
 running on the coordinator with the model selected by `DEPENDENCY_MODEL`
 (default `qwen3:8b`). Restart the coordinator server after updating this code.
 Automatic Calendar polling and a live graph screen are separate future steps.
+
+While the model is unavailable or training, start the coordinator with
+`--no-analysis`. It still accepts and stores uploads; their analysis status
+stays `pending`. Restart the coordinator without that flag when the model is
+ready, and it will process the latest saved collection without asking members
+to upload again.

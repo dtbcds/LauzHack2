@@ -56,16 +56,18 @@ class CoordinatorServer(ThreadingHTTPServer):
 
     def __init__(
         self, address: tuple[str, int], database_path: str | Path = "data/coordinator.sqlite3",
-        analyzer: Callable[[list[dict[str, Any]]], dict[str, Any]] = analyze_submissions,
+        analyzer: Callable[[list[dict[str, Any]]], dict[str, Any]] | None = analyze_submissions,
     ):
         self.store = SubmissionStore(database_path)
         self.analyzer = analyzer
         self.analysis_queue: queue.Queue[tuple[str, str, int] | None] = queue.Queue()
+        self.analysis_worker: threading.Thread | None = None
         super().__init__(address, CoordinatorHandler)
-        self.analysis_worker = threading.Thread(target=self._run_analysis, daemon=True)
-        self.analysis_worker.start()
-        for job in self.store.pending_analyses():
-            self.analysis_queue.put(job)
+        if analyzer is not None:
+            self.analysis_worker = threading.Thread(target=self._run_analysis, daemon=True)
+            self.analysis_worker.start()
+            for job in self.store.pending_analyses():
+                self.analysis_queue.put(job)
 
     def _run_analysis(self) -> None:
         while (job := self.analysis_queue.get()) is not None:
@@ -157,7 +159,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
 
         try:
             revision = self.server.store.save(payload)
-            self.server.analysis_queue.put((payload["project_id"], payload["collection_id"], revision))
+            if self.server.analysis_worker is not None:
+                self.server.analysis_queue.put((payload["project_id"], payload["collection_id"], revision))
         except sqlite3.Error:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not save submission"})
             return
@@ -179,6 +182,7 @@ def main() -> None:
     parser.add_argument("--database", type=Path, default=Path("data/coordinator.sqlite3"))
     parser.add_argument("--certfile", type=Path, help="TLS certificate (required for remote access)")
     parser.add_argument("--keyfile", type=Path, help="TLS private key (required for remote access)")
+    parser.add_argument("--no-analysis", action="store_true", help="Save uploads without running Ollama")
     args = parser.parse_args()
     if bool(args.certfile) != bool(args.keyfile):
         parser.error("--certfile and --keyfile must be provided together")
@@ -191,7 +195,10 @@ def main() -> None:
         tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
         tls_context.load_cert_chain(args.certfile, args.keyfile)
 
-    with CoordinatorServer((args.host, args.port), args.database) as server:
+    with CoordinatorServer(
+        (args.host, args.port), args.database,
+        analyzer=None if args.no_analysis else analyze_submissions,
+    ) as server:
         if tls_context:
             server.socket = tls_context.wrap_socket(server.socket, server_side=True)
         scheme = "https" if tls_context else "http"

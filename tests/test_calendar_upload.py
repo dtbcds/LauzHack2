@@ -6,7 +6,12 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from app.calendar.send_to_coordinator import send_calendar_snapshot, submission_endpoint
+from app.calendar.send_to_coordinator import (
+    CalendarSnapshotSync,
+    send_calendar_snapshot,
+    submission_endpoint,
+    watch_calendar,
+)
 from app.coordinator.server import CoordinatorServer
 
 
@@ -68,6 +73,67 @@ class CalendarUploadTests(unittest.TestCase):
     def test_rejects_remote_plain_http(self):
         with self.assertRaises(ValueError):
             submission_endpoint("http://192.168.1.42:8000")
+
+    @patch("app.calendar.send_to_coordinator.fetch_events")
+    def test_sync_detects_add_edit_and_delete_without_reuploading_unchanged_events(self, fetch_events):
+        first = {"id": "event-1", "summary": "Draft plan", "description": "First draft"}
+        second = {"id": "event-2", "summary": "Approve plan", "description": "Approve the draft"}
+        edited = {**second, "description": "Approve the revised draft"}
+        fetch_events.side_effect = [
+            [first, second], [second, first], [first, edited], [], [],
+        ]
+        sync = CalendarSnapshotSync(
+            project_id="demo", collection_id="round-1", member_id="dany",
+            coordinator_url=self.url, secret=self.secret, service=object(),
+        )
+
+        self.assertEqual(sync.sync_once()["analysis_revision"], 1)
+        self.assertIsNone(sync.sync_once())
+        self.assertEqual(self.server.store.get_analysis("demo", "round-1")["revision"], 1)
+        self.assertEqual(sync.sync_once()["analysis_revision"], 2)
+        self.assertEqual(sync.sync_once()["analysis_revision"], 3)
+        self.assertIsNone(sync.sync_once())
+        self.assertEqual(self.server.store.list_for_collection("demo", "round-1")[0]["events"], [])
+
+    @patch("app.calendar.send_to_coordinator.fetch_events")
+    def test_failed_upload_is_retried_on_next_check(self, fetch_events):
+        fetch_events.return_value = [{"id": "event-1", "summary": "Draft plan"}]
+        sync = CalendarSnapshotSync(
+            project_id="demo", collection_id="round-1", member_id="dany",
+            coordinator_url=self.url, secret="wrong-secret", service=object(),
+        )
+        with self.assertRaises(HTTPError) as raised:
+            sync.sync_once()
+        self.assertEqual(raised.exception.code, 401)
+        sync.secret = self.secret
+        self.assertEqual(sync.sync_once()["event_count"], 1)
+
+    @patch("app.calendar.send_to_coordinator.fetch_events")
+    def test_watch_rechecks_and_uploads_a_deletion(self, fetch_events):
+        fetch_events.side_effect = [
+            [{"id": "event-1", "summary": "Draft plan"}],
+            [{"id": "event-1", "summary": "Draft plan"}],
+            [],
+        ]
+        sync = CalendarSnapshotSync(
+            project_id="demo", collection_id="round-1", member_id="dany",
+            coordinator_url=self.url, secret=self.secret, service=object(),
+        )
+
+        class ThreeChecks:
+            checks = 0
+
+            def is_set(self):
+                return self.checks >= 3
+
+            def wait(self, _seconds):
+                self.checks += 1
+
+        watch_calendar(sync, interval_seconds=30, stop_event=ThreeChecks())
+
+        self.assertEqual(fetch_events.call_count, 3)
+        self.assertEqual(self.server.store.get_analysis("demo", "round-1")["revision"], 2)
+        self.assertEqual(self.server.store.list_for_collection("demo", "round-1")[0]["events"], [])
 
 
 if __name__ == "__main__":
