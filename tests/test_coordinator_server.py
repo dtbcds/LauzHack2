@@ -8,11 +8,13 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.calendar.google_calendar import prepare_event
+from app.coordinator.analysis import _dependency_cache, analyze_submissions
 from app.coordinator.server import CoordinatorServer
 from app.coordinator.storage import SubmissionStore
 
@@ -243,6 +245,79 @@ class CoordinatorServerTests(unittest.TestCase):
         release.set()
         state = self.wait_for_analysis(revision)
         self.assertEqual(state["result"], {"event_count": 0})
+
+    def test_partial_graph_cannot_overwrite_a_newer_upload(self):
+        payload = {
+            "project_id": "demo", "collection_id": "round-1", "member_id": "dany",
+            "events": [],
+        }
+        first = self.server.store.save(payload)
+        self.assertTrue(self.server.store.mark_analysis_processing("demo", "round-1", first))
+        second = self.server.store.save(payload)
+        self.assertFalse(self.server.store.save_analysis_progress(
+            "demo", "round-1", first, {"nodes": [], "edges": []}, 0, 0,
+        ))
+        state = self.server.store.get_analysis("demo", "round-1")
+        self.assertEqual(state["revision"], second)
+        self.assertIsNone(state["result"])
+
+    def test_graph_links_are_published_before_analysis_finishes(self):
+        release_first = threading.Event()
+        release_second = threading.Event()
+        self.server.analyzer = analyze_submissions
+        _dependency_cache.clear()
+
+        def extract(target, _candidates):
+            if target["id"].endswith(":a"):
+                release_first.wait(timeout=2)
+                return {"dependencies": [{
+                    "prerequisite_task_id": "dany:primary:c",
+                    "dependent_task_id": target["id"], "type": "hard",
+                    "weight": 1.0, "evidence": "after C", "confidence": 0.9,
+                }]}
+            if target["id"].endswith(":b"):
+                release_second.wait(timeout=2)
+            return {"dependencies": []}
+
+        payload = {
+            "project_id": "demo", "collection_id": "round-1", "member_id": "dany",
+            "events": [
+                {"id": "a", "summary": "A", "description": "Do A after C"},
+                {"id": "b", "summary": "B", "description": "Do B"},
+                {"id": "c", "summary": "C", "description": "Do C"},
+            ],
+        }
+        try:
+            with patch("dependency_extraction.extract_dependencies", side_effect=extract):
+                with self.post(payload) as response:
+                    revision = json.load(response)["analysis_revision"]
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    state = self.server.store.get_analysis("demo", "round-1")
+                    progress = (state or {}).get("result") or {}
+                    if progress.get("analysis_progress", {}).get("completed") == 0:
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(state["status"], "processing")
+                self.assertEqual(len(progress["nodes"]), 3)
+                self.assertEqual(len(progress["edges"]), 0)
+                release_first.set()
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    state = self.server.store.get_analysis("demo", "round-1")
+                    progress = (state or {}).get("result") or {}
+                    if progress.get("analysis_progress", {}).get("completed") == 1:
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(len(progress["edges"]), 1)
+                release_second.set()
+                finished = self.wait_for_analysis(revision)
+                self.assertEqual(finished["status"], "ready")
+                self.assertEqual(len(finished["result"]["edges"]), 1)
+        finally:
+            release_first.set()
+            release_second.set()
+            _dependency_cache.clear()
 
     def test_existing_submissions_are_analyzed_when_server_starts(self):
         legacy_path = Path(self.directory.name) / "legacy.sqlite3"

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import OrderedDict
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
 from app.coordinator.storage import SubmissionStore
+
+
+_dependency_cache: OrderedDict[str, tuple[dict[str, Any], ...]] = OrderedDict()
 
 
 def event_to_task(event: dict[str, Any], member_id: str) -> dict[str, Any]:
@@ -36,6 +40,7 @@ def event_to_task(event: dict[str, Any], member_id: str) -> dict[str, Any]:
 def analyze_submissions(
     submissions: list[dict[str, Any]],
     extractor: Callable[[dict[str, Any], list[dict[str, Any]]], dict[str, Any]] | None = None,
+    on_progress: Callable[[dict[str, Any], int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Run the full LLM dependency pass and build UI-ready graph data."""
     from graph_construction import build_graph, graph_to_ui_data
@@ -45,15 +50,43 @@ def analyze_submissions(
         for submission in submissions
         for event in submission["events"]
     ]
+    dependencies: list[dict[str, Any]] = []
+
+    def publish(completed: int) -> None:
+        if on_progress is not None:
+            partial = graph_to_ui_data(build_graph(tasks, dependencies))
+            on_progress(partial, completed, len(tasks))
+
     if len(tasks) > 1 and extractor is None:
         from dependency_extraction import extract_dependencies
 
-        extractor = extract_dependencies
-    dependencies: list[dict[str, Any]] = []
-    for task in tasks:
-        candidates = [candidate for candidate in tasks if candidate["id"] != task["id"]]
-        if candidates:
-            dependencies.extend(extractor(task, candidates)["dependencies"])
+        model_tasks = [
+            {key: task[key] for key in ("id", "title", "description", "owner")}
+            for task in tasks
+        ]
+        model_tasks.sort(key=lambda task: task["id"])
+        snapshot = json.dumps(model_tasks, ensure_ascii=False, sort_keys=True)
+        cached = _dependency_cache.get(snapshot)
+        if cached is not None:
+            _dependency_cache.move_to_end(snapshot)
+            dependencies = list(cached)
+        else:
+            publish(0)
+            for index, task in enumerate(model_tasks, 1):
+                candidates = [candidate for candidate in model_tasks if candidate["id"] != task["id"]]
+                dependencies.extend(extract_dependencies(task, candidates)["dependencies"])
+                publish(index)
+            _dependency_cache[snapshot] = tuple(dependencies)
+            if len(_dependency_cache) > 8:
+                _dependency_cache.popitem(last=False)
+    else:
+        publish(0)
+        if extractor is not None:
+            for index, task in enumerate(tasks, 1):
+                candidates = [candidate for candidate in tasks if candidate["id"] != task["id"]]
+                if candidates:
+                    dependencies.extend(extractor(task, candidates)["dependencies"])
+                publish(index)
     graph = build_graph(tasks, dependencies)
     return graph_to_ui_data(graph)
 

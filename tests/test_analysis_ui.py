@@ -51,6 +51,14 @@ def test_analysis_states_and_empty_result():
     assert 'Analysing' in analysis_message({'status': 'processing'})
     assert 'offline' in analysis_message({'status': 'failed', 'error': 'offline'})
     assert 'previous graph' in analysis_message({'status': 'processing', 'result': {'nodes': []}})
+    assert '1/3 tasks checked' in analysis_message({
+        'status': 'processing',
+        'result': {'nodes': [], 'analysis_progress': {'completed': 1, 'total': 3}},
+    })
+    assert 'partial graph' in analysis_message({
+        'status': 'failed', 'error': 'invalid link',
+        'result': {'nodes': [], 'analysis_progress': {'completed': 1, 'total': 3}},
+    })
     assert analysis_message({'status': 'ready', 'result': {'nodes': []}}) == ''
     assert tasks_from_snapshot({'nodes': [], 'edges': []}) == ()
 

@@ -230,6 +230,23 @@ class SubmissionStore:
             """, (datetime.now(timezone.utc).isoformat(), project_id, collection_id, revision))
         return changed.rowcount == 1
 
+    def save_analysis_progress(
+        self, project_id: str, collection_id: str, revision: int,
+        result: dict[str, Any], completed: int, total: int,
+    ) -> bool:
+        """Publish a partial graph only for the revision still being analysed."""
+        partial = {**result, "analysis_progress": {"completed": completed, "total": total}}
+        with self._connect() as database:
+            changed = database.execute("""
+                UPDATE analyses SET result_json = ?, updated_at = ?
+                WHERE project_id = ? AND collection_id = ? AND revision = ?
+                  AND status = 'processing'
+            """, (
+                json.dumps(partial, ensure_ascii=False), datetime.now(timezone.utc).isoformat(),
+                project_id, collection_id, revision,
+            ))
+        return changed.rowcount == 1
+
     def finish_analysis(
         self, project_id: str, collection_id: str, revision: int,
         *, result: dict[str, Any] | None = None, error: str | None = None,

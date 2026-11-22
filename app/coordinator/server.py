@@ -27,6 +27,10 @@ EVENT_FIELDS = {
 }
 
 
+class SupersededAnalysis(Exception):
+    """A newer upload replaced the revision being analysed."""
+
+
 def validate_submission(payload: Any) -> dict[str, Any]:
     """Check the employee-to-coordinator JSON contract."""
     if not isinstance(payload, dict):
@@ -77,13 +81,24 @@ class CoordinatorServer(ThreadingHTTPServer):
                     continue
                 started = time.monotonic()
                 submissions = self.store.list_for_collection(project_id, collection_id)
-                result = self.analyzer(submissions)
+                if self.analyzer is analyze_submissions:
+                    def publish(result: dict[str, Any], completed: int, total: int) -> None:
+                        if not self.store.save_analysis_progress(
+                            project_id, collection_id, revision, result, completed, total,
+                        ):
+                            raise SupersededAnalysis()
+
+                    result = self.analyzer(submissions, on_progress=publish)
+                else:
+                    result = self.analyzer(submissions)
                 if self.store.finish_analysis(project_id, collection_id, revision, result=result):
                     print(
                         f"Analysis ready for {project_id}/{collection_id} revision {revision} "
                         f"({time.monotonic() - started:.1f}s)",
                         flush=True,
                     )
+            except SupersededAnalysis:
+                pass
             except Exception as exc:
                 if self.store.finish_analysis(project_id, collection_id, revision, error=str(exc)):
                     print(

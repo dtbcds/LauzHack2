@@ -12,14 +12,17 @@ if (-not $Flutter) {
     } elseif ($command) {
         $Flutter = $command.Source
     } else {
-        $Flutter = Get-ChildItem "$env:USERPROFILE/flutter/*/bin/flutter.bat" |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1 -ExpandProperty FullName
+        $userSdkRoot = Join-Path $env:USERPROFILE 'flutter'
+        if (Test-Path $userSdkRoot) {
+            $Flutter = Get-ChildItem (Join-Path $userSdkRoot '*/bin/flutter.bat') |
+                Sort-Object FullName -Descending |
+                Select-Object -First 1 -ExpandProperty FullName
+        }
     }
 }
 
 if (-not $Flutter) {
-    throw 'Flutter is required. Pass its path with -Flutter.'
+    throw 'Flutter is required. Install Flutter 3.47 or later, add it to PATH, or pass its flutter.bat path with -Flutter.'
 }
 
 if (-not (Test-Path (Join-Path $clientRoot 'windows'))) {

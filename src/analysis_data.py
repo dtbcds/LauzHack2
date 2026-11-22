@@ -44,12 +44,17 @@ def analysis_message(state: dict | None) -> str:
     status = state["status"]
     if status == "ready":
         return ""  # An empty ready snapshot is a valid result too.
+    result = state.get("result")
+    progress = result.get("analysis_progress") if isinstance(result, dict) else None
+    if status == "processing" and isinstance(progress, dict):
+        return (f"Building graph: {progress['completed']}/{progress['total']} tasks checked. "
+                "Links appear as they are found.")
     message = {
         "pending": "Analysis queued.", "processing": "Analysing Calendar events…",
         "failed": f"Analysis failed: {state.get('error') or 'Unknown error'}",
     }.get(status, "Waiting for analysis.")
-    if state.get("result") is not None:
-        message += " Showing the previous graph."
+    if result is not None:
+        message += " Showing the partial graph." if progress else " Showing the previous graph."
     return message
 
 

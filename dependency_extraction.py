@@ -6,7 +6,7 @@ import os
 import ollama
 
 
-MODEL = os.getenv("DEPENDENCY_MODEL", "qwen3:8b")
+MODEL = os.getenv("DEPENDENCY_MODEL", "dependency-qwen3-v2:q4")
 
 RESPONSE_SCHEMA = {
     "type": "object",
