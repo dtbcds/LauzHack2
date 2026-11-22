@@ -51,3 +51,16 @@ def analysis_message(state: dict | None) -> str:
     if state.get("result") is not None:
         message += " Showing the previous graph."
     return message
+
+
+def refresh_message(state: dict) -> str:
+    if not state["revision"]:
+        return ""
+    members = state["members"]
+    if not members:
+        return "No project members registered."
+    waiting = [member for member, status in members.items() if status != "received"]
+    received = len(members) - len(waiting)
+    if waiting:
+        return f"Calendar refresh: {received}/{len(members)} received. Waiting for: {', '.join(waiting)}."
+    return f"Calendar refresh: all {received} members received."

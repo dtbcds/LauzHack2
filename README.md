@@ -47,6 +47,13 @@ employee uploads. Set `RELAY_PROJECT_ID`, `RELAY_COLLECTION_ID`, and optionally
 `RELAY_DATABASE` before launching to select another collection/database. The UI
 and coordinator must read the same database on the coordinator computer.
 
+Click **Refresh** to ask registered project members for fresh Calendar snapshots.
+The screen shows how many members responded and who is still waiting. Each
+member must keep the Calendar client running with `--on-demand`; offline members
+remain waiting. Analysis continues in the coordinator after uploads, and the
+screen displays its saved result automatically. The button can request another
+refresh if a member needs to reconnect.
+
 The current custom desktop client launcher requires the Windows build described
 above; a macOS build/launcher is still needed to open this UI on the Mac.
 

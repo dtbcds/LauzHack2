@@ -53,3 +53,44 @@ def test_analysis_states_and_empty_result():
     assert 'previous graph' in analysis_message({'status': 'processing', 'result': {'nodes': []}})
     assert analysis_message({'status': 'ready', 'result': {'nodes': []}}) == ''
     assert tasks_from_snapshot({'nodes': [], 'edges': []}) == ()
+
+
+def test_refresh_button_requests_selected_collection(tmp_path, monkeypatch):
+    import asyncio
+    import importlib.util
+    from app.coordinator.storage import SubmissionStore
+
+    spec = importlib.util.spec_from_file_location('relay_ui_main', Path(__file__).parents[1] / 'src/main.py')
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+    database = tmp_path / 'coordinator.sqlite3'
+    store = SubmissionStore(database)
+    store.register_member('team', 'dany')
+    monkeypatch.setenv('RELAY_DATABASE', str(database))
+    monkeypatch.setenv('RELAY_PROJECT_ID', 'team')
+    monkeypatch.setenv('RELAY_COLLECTION_ID', 'round-2')
+    captured = {}
+
+    def mount(page, organisations, **kwargs):
+        captured.update(kwargs)
+        return lambda *args: None
+
+    monkeypatch.setattr(ui, 'mount_workspace', mount)
+
+    class Page:
+        class Window:
+            pass
+        window = Window()
+
+        def update(self):
+            pass
+
+        def run_task(self, handler):
+            self.handler = handler
+
+    ui.main(Page())
+    button = captured['refresh_control']
+    asyncio.run(button.on_click())
+    assert store.get_refresh_revision('team', 'round-2') == 1
+    assert not button.disabled
+    assert 'dany' in captured['status_control'].controls[0].value

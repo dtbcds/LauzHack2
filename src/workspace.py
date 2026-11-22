@@ -17,6 +17,7 @@ def mount_workspace(
     page: ft.Page, organisations: Mapping[str, tuple[Task, ...]], *,
     snapshots: Mapping[str, dict[str, Any]] | None = None,
     status_control: ft.Control | None = None,
+    refresh_control: ft.Control | None = None,
 ) -> Callable[[str, tuple[Task, ...], dict[str, Any] | None], None]:
     organisations = dict(organisations)
     snapshots = dict(snapshots or {})
@@ -97,7 +98,8 @@ def mount_workspace(
         on_click=toggle_ask,
     )
     board = task_board(organisations[organisation], show_task, ask_button,
-                       snapshot=snapshots.get(organisation), status_control=status_control)
+                       snapshot=snapshots.get(organisation), status_control=status_control,
+                       refresh_control=refresh_control)
 
     def select_organisation(name: str) -> None:
         nonlocal organisation, asking, ask_content, query_task_ids

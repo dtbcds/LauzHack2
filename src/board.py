@@ -28,6 +28,7 @@ def task_board(
     ask_button: ft.Control | None = None,
     *, snapshot: Mapping[str, Any] | None = None,
     status_control: ft.Control | None = None,
+    refresh_control: ft.Control | None = None,
 ) -> TaskBoard:
     selected: Task | None = None
     highlighted: set[str] = set()
@@ -392,6 +393,8 @@ def task_board(
         ft.Text("Tasks", size=36, weight=ft.FontWeight.W_700, color=p.TEXT),
         ft.Container(expand=True),
     ]
+    if refresh_control is not None:
+        title_controls.append(refresh_control)
     if ask_button is not None:
         title_controls.append(ask_button)
 
