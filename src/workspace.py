@@ -1,6 +1,7 @@
 """Compose the task list, organisation sidebar, and Queries panel."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Callable
+from typing import Any
 from functools import partial
 
 import flet as ft
@@ -12,7 +13,13 @@ from component import Task, task_detail
 from side_panel import SidePanel
 
 
-def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]) -> None:
+def mount_workspace(
+    page: ft.Page, organisations: Mapping[str, tuple[Task, ...]], *,
+    snapshots: Mapping[str, dict[str, Any]] | None = None,
+    status_control: ft.Control | None = None,
+) -> Callable[[str, tuple[Task, ...], dict[str, Any] | None], None]:
+    organisations = dict(organisations)
+    snapshots = dict(snapshots or {})
     organisation = next(iter(organisations))
 
     sidebar_width = 56
@@ -29,7 +36,8 @@ def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]
         if asking:
             content = ask_content
         else:
-            content = task_detail(active_task, board.select) if active_task else None
+            content = task_detail(active_task, board.select,
+                                   {task.id: task.title for task in organisations[organisation]}) if active_task else None
 
         ask_style.bgcolor = palette.SELECTED if asking else palette.CONTROL
         side_panel.show(content)
@@ -88,7 +96,8 @@ def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]
         style=ask_style,
         on_click=toggle_ask,
     )
-    board = task_board(organisations[organisation], show_task, ask_button)
+    board = task_board(organisations[organisation], show_task, ask_button,
+                       snapshot=snapshots.get(organisation), status_control=status_control)
 
     def select_organisation(name: str) -> None:
         nonlocal organisation, asking, ask_content, query_task_ids
@@ -104,7 +113,7 @@ def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]
         ask_content = None
         query_task_ids = None
 
-        board.set_tasks(organisations[name])
+        board.set_tasks(organisations[name], snapshots.get(name))
 
         for item in org_buttons:
             item.selected = item.data == name
@@ -183,3 +192,16 @@ def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]
             on_click=board.dismiss_filters,
         )
     )
+
+    def update_analysis(name: str, tasks: tuple[Task, ...], snapshot: dict | None) -> None:
+        nonlocal asking, ask_content, query_task_ids
+        organisations[name] = tasks
+        snapshots[name] = snapshot
+        if name != organisation:
+            return
+        asking = False
+        ask_content = None
+        query_task_ids = None
+        board.set_tasks(tasks, snapshot)
+
+    return update_analysis

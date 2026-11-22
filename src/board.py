@@ -1,4 +1,5 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from typing import Any
 from dataclasses import dataclass
 
 import flet as ft
@@ -16,7 +17,7 @@ class TaskBoard:
     view_switch: ft.Container
     select: Callable[[Task | None], None]
     dismiss_filters: Callable[[], bool]
-    set_tasks: Callable[[tuple[Task, ...]], None]
+    set_tasks: Callable[..., None]
     show_query_result: Callable[[set[str] | None], None]
     gesture_surface: Callable[..., GraphGestureSurface]
 
@@ -25,6 +26,8 @@ def task_board(
     tasks: tuple[Task, ...],
     on_select: Callable[[Task | None], None],
     ask_button: ft.Control | None = None,
+    *, snapshot: Mapping[str, Any] | None = None,
+    status_control: ft.Control | None = None,
 ) -> TaskBoard:
     selected: Task | None = None
     highlighted: set[str] = set()
@@ -33,7 +36,7 @@ def task_board(
     compact = False
     board_width = 1200.0
     graph_view = TaskGraph(lambda task: select(task))
-    graph_view.set_tasks(tasks)
+    graph_view.set_tasks(tasks, snapshot)
     gesture_surfaces: list[GraphGestureSurface] = []
 
     blocking_rows = ft.ListView(expand=True, spacing=0)
@@ -238,11 +241,11 @@ def task_board(
         filters.set_query_override(query_active)
         render(keep_selection=True)
 
-    def set_tasks(records: tuple[Task, ...]) -> None:
+    def set_tasks(records: tuple[Task, ...], snapshot: Mapping[str, Any] | None = None) -> None:
         nonlocal tasks, selected, query_active
 
         tasks = records
-        graph_view.set_tasks(records)
+        graph_view.set_tasks(records, snapshot)
         selected = None
         highlighted.clear()
         query_active = False
@@ -402,6 +405,7 @@ def task_board(
         ft.Column(
             [
                 ft.Row(title_controls, spacing=p.SMALL),
+                *([status_control] if status_control is not None else []),
                 filters.toolbar,
                 query_scope,
                 SettledSize(content_area, expand=True, on_settled=resize_list_area),

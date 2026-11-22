@@ -32,6 +32,24 @@ The app mark in `assets/relay.svg` is adapted from Lucide's Workflow icon.
 Its ISC license is included in `assets/LICENSE.lucide`. The matching PNG preview
 and Windows ICO are included; the desktop build embeds the ICO automatically.
 
+## Display coordinator analysis
+
+The UI reads the coordinator's SQLite database and displays the saved
+`graph_to_ui_data` result in the list, graph, details, and Queries panel. It checks
+for changes every second; this only reads saved analysis and does not call Google
+or the model. A previous graph stays visible while a newer analysis runs or fails.
+An empty ready result clears removed tasks. Calendar completion status appears as
+Unknown.
+
+Defaults are project `demo`, collection `round-1`, and
+`data/coordinator.sqlite3` under the repository root. These IDs refer to real
+employee uploads. Set `RELAY_PROJECT_ID`, `RELAY_COLLECTION_ID`, and optionally
+`RELAY_DATABASE` before launching to select another collection/database. The UI
+and coordinator must read the same database on the coordinator computer.
+
+The current custom desktop client launcher requires the Windows build described
+above; a macOS build/launcher is still needed to open this UI on the Mac.
+
 ## Fine-tune task dependency classification
 
 `train_dependency_model.py` fine-tunes the Hugging Face `Qwen/Qwen3-8B`

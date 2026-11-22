@@ -20,7 +20,7 @@ class Task:
     description: str
     owner: str
     deadline: str | None
-    score: int
+    score: float
     status: str = "pending"
     bottleneck: bool = False
     downstream_count: int = 0
@@ -29,7 +29,7 @@ class Task:
     dependents: tuple[str, ...] = ()
     evidence: str | None = None
     confidence: float | None = None
-    score_breakdown: tuple[int, int, int, int] = (0, 0, 0, 0)
+    score_breakdown: tuple[float, float, float, float] = (0, 0, 0, 0)
 
 
 def format_deadline(value: str | None) -> str:
@@ -39,7 +39,10 @@ def format_deadline(value: str | None) -> str:
     return datetime.fromisoformat(value).strftime("%a, %d %b · %H:%M")
 
 
-def task_detail(task: Task, close: Callable[[Task | None], None]) -> ft.Column:
+def task_detail(task: Task, close: Callable[[Task | None], None],
+                titles: dict[str, str] | None = None) -> ft.Column:
+    task_titles = titles
+
     def property_row(name: str, value: str, icon: ft.IconData) -> ft.Row:
         return ft.Row(
             [
@@ -72,7 +75,7 @@ def task_detail(task: Task, close: Callable[[Task | None], None]) -> ft.Column:
         return ft.Text(value, size=palette.NOTE_TEXT, color=palette.MUTED)
 
     def dependency_group(label: str, titles: tuple[str, ...]) -> ft.Column:
-        return ft.Column([note(label), body("\n".join(titles) or "None")], spacing=4)
+        return ft.Column([note(label), body("\n".join((task_titles or {}).get(value, value) for value in titles) or "None")], spacing=4)
 
     properties: list[ft.Control] = [
         property_row("Owner", task.owner or "Unknown owner", ft.Icons.PERSON_OUTLINE),

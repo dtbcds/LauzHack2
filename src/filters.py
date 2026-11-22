@@ -88,7 +88,7 @@ def task_filters(tasks: tuple[Task, ...], on_change: Callable[[], None]) -> Task
         "Person",
         owner_choices(tasks),
         on_change,
-        value="You",
+        value="All",
     )
 
     sort, _replace_sort_choices = p.select_menu(
