@@ -99,8 +99,9 @@ To return to coordinator mode in PowerShell, run
 
 `train_dependency_model.py` fine-tunes the Hugging Face `Qwen/Qwen3-8B`
 checkpoint with 4-bit QLoRA. Training requires a CUDA GPU, its matching PyTorch
-build, and the packages in `requirements-train.txt`. Ollama's `qwen3:8b` is used
-for inference only; it is not a trainable checkpoint.
+build, and the packages in `requirements-train.txt`. The packaged inference model
+is `dist/release/dependency-qwen3-v2-Q4_K_M.gguf` (about 5 GB); its Ollama name is
+`dependency-qwen3-v2:q4`.
 
 Create separate UTF-8 JSONL files for training and validation. Each line is one
 target task with its complete candidate list and gold dependencies:
@@ -117,21 +118,16 @@ dependency labels, mismatched weights, and unsupported evidence.
 
 ```powershell
 python -m pip install -r requirements-train.txt
-python train_dependency_model.py validate data/train.jsonl data/validation.jsonl
-python train_dependency_model.py train --train data/train.jsonl --validation data/validation.jsonl --output runs/dependency-qwen3
-python train_dependency_model.py export --adapter runs/dependency-qwen3/adapter --output runs/dependency-qwen3/merged
-cd runs/dependency-qwen3/merged
-ollama create dependency-qwen3
-cd ../../..
-python train_dependency_model.py evaluate --data data/test.jsonl --model dependency-qwen3
+python train_dependency_model.py validate data/v2/train.jsonl data/v2/validation.jsonl data/v2/test.jsonl
+python train_dependency_model.py train --train data/v2/train.jsonl --validation data/v2/validation.jsonl --output runs/dependency-qwen3-v2
+ollama create dependency-qwen3-v2:q4 -f dist/release/Modelfile
+python train_dependency_model.py evaluate --data data/v2/test.jsonl --model dependency-qwen3-v2:q4
 ```
 
-Set `DEPENDENCY_MODEL=dependency-qwen3` before running the application or live
-extraction tests to use the imported model. Reserve a separate test file for
-the evaluation command; it reports per-class confusion and exact match. The
-export step merges in CPU memory and
-requires room for the full 8B model; Ollama imports the merged Safetensors
-directory through its generated `Modelfile`.
+The backend uses `dependency-qwen3-v2:q4` by default; set `DEPENDENCY_MODEL` to
+override it. Keep `models/Qwen3-8B`, `runs/dependency-qwen3-v2/checkpoint-300`,
+and `data/v2` to retrain or rebuild the packaged model. The evaluation command
+reports per-class confusion and exact match.
 
 ## Desktop bottleneck notifications
 
