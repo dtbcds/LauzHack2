@@ -19,7 +19,8 @@ import flet as ft
 
 import palette
 from workspace import mount_workspace
-from native_motion import configure_desktop_client
+from native_motion import NotificationSink, configure_desktop_client
+from unblock_notifications import newly_unblocked_top_task
 
 
 def main(page: ft.Page, *, group_secret: str | None = None) -> None:
@@ -73,7 +74,29 @@ def main(page: ft.Page, *, group_secret: str | None = None) -> None:
     name = "My Calendar" if personal else project
     status = ft.Text(color=palette.MUTED, visible=False)
     refresh_status = ft.Text(color=palette.MUTED, visible=False)
+    notification_text = ft.Text(color=palette.TEXT, weight=ft.FontWeight.W_600)
+    notification_banner = ft.Container(
+        ft.Row([
+            ft.Icon(ft.Icons.NOTIFICATIONS_ACTIVE_OUTLINED, color=palette.ACCENT),
+            notification_text,
+        ], spacing=palette.SMALL),
+        bgcolor=palette.SELECTED,
+        border=ft.Border.all(1, palette.ACCENT),
+        border_radius=8,
+        padding=palette.MEDIUM,
+        visible=False,
+    )
+    notification_sink = NotificationSink(width=0, height=0)
     refresh_error = None
+
+    def show_notification(task_title: str, blocker_title: str, *, demo: bool = False) -> None:
+        prefix = "Demo alert: " if demo else "Now your top priority: "
+        notification_text.value = f"{prefix}{task_title} — {blocker_title} was removed."
+        notification_banner.visible = True
+        notification_sink.sequence += 1
+        notification_sink.title = "Relay: task unblocked"
+        notification_sink.message = f"{task_title} is now your top priority. {blocker_title} was removed."
+        page.update()
 
     async def refresh_calendars() -> None:
         nonlocal refresh_error
@@ -110,14 +133,21 @@ def main(page: ft.Page, *, group_secret: str | None = None) -> None:
         tooltip="Refresh group Calendars" if group else "Fetch my Calendar" if personal else "Ask members to sync their Calendars",
         style=palette.control_button_style(), on_click=refresh_calendars,
     )
+    test_button = ft.TextButton(
+        "Test alert", tooltip="Show an example task-unblocked notification",
+        style=palette.control_button_style(),
+        on_click=lambda: show_notification("Review presentation", "Approve sales figures", demo=True),
+    )
     update_analysis = mount_workspace(
-        page, {name: ()}, status_control=ft.Column([refresh_status, status], spacing=4),
-        refresh_control=refresh_button,
+        page, {name: ()}, status_control=ft.Column([notification_banner, refresh_status, status, notification_sink], spacing=4),
+        refresh_control=ft.Row([refresh_button, test_button], spacing=palette.SMALL),
     )
 
     async def follow_analysis() -> None:
         previous = object()
         previous_progress = object()
+        previous_ready = None
+        notification_owner = os.environ.get("RELAY_NOTIFY_OWNER", member_label)
         while True:
             try:
                 state = (await asyncio.to_thread(group.view) if group else
@@ -140,6 +170,12 @@ def main(page: ft.Page, *, group_secret: str | None = None) -> None:
                 if state != previous:
                     snapshot = state.get("result") if state else None
                     tasks = tasks_from_snapshot(snapshot) if snapshot is not None else ()
+                    if state and state["status"] == "ready" and snapshot is not None:
+                        if previous_ready is not None:
+                            alert = newly_unblocked_top_task(previous_ready, snapshot, notification_owner)
+                            if alert:
+                                show_notification(*alert)
+                        previous_ready = snapshot
                     update_analysis(name, tasks, snapshot)
                     status.value = analysis_message(state)
                     if personal and state and state["status"] != "ready":

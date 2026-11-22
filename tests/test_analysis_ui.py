@@ -97,11 +97,15 @@ def test_refresh_button_requests_selected_collection(tmp_path, monkeypatch):
             self.handler = handler
 
     ui.main(Page())
-    button = captured['refresh_control']
+    button = captured['refresh_control'].controls[0]
     asyncio.run(button.on_click())
     assert store.get_refresh_revision('team', 'round-2') == 1
     assert not button.disabled
-    assert 'dany' in captured['status_control'].controls[0].value
+    assert 'dany' in captured['status_control'].controls[1].value
+    captured['refresh_control'].controls[1].on_click()
+    assert captured['status_control'].controls[0].visible
+    assert 'Demo alert:' in captured['status_control'].controls[0].content.controls[1].value
+    assert captured['status_control'].controls[-1].sequence == 1
 
 
 def test_coordinator_can_be_excluded_from_refresh_without_losing_access(tmp_path):

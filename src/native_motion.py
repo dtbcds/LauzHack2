@@ -52,6 +52,13 @@ class SettledSize(ft.LayoutControl):
     on_settled: ft.EventHandler[ft.LayoutSizeChangeEvent] | None = None
 
 
+@ft.control("NotificationSink")
+class NotificationSink(ft.LayoutControl):
+    sequence: int = 0
+    title: str = "Relay"
+    message: str = ""
+
+
 def configure_desktop_client() -> None:
     """Use the locally built client for the extension, including debugpy launches."""
     root = Path(__file__).resolve().parents[1] / "build/native_client/build"

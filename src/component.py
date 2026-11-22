@@ -30,6 +30,7 @@ class Task:
     evidence: str | None = None
     confidence: float | None = None
     score_breakdown: tuple[float, float, float, float] = (0, 0, 0, 0)
+    blocking_prerequisites: tuple[str, ...] | None = None
 
 
 def format_deadline(value: str | None) -> str:

@@ -6,7 +6,7 @@ import flet as ft
 
 import palette as p
 from component import Task, format_deadline
-from filters import task_filters
+from filters import COMPLETED_STATUSES, is_blocked, task_filters
 from graph import TaskGraph
 from native_motion import GraphGestureSurface, SettledSize
 
@@ -44,6 +44,8 @@ def task_board(
     non_blocking_rows = ft.ListView(expand=True, spacing=0)
     blocking_count = ft.Text(size=p.NOTE_TEXT, color=p.MUTED)
     non_blocking_count = ft.Text(size=p.NOTE_TEXT, color=p.MUTED)
+    blocking_title = ft.Text(size=p.SECTION_TITLE, color=p.TEXT, weight=ft.FontWeight.W_600)
+    non_blocking_title = ft.Text(size=p.SECTION_TITLE, color=p.TEXT, weight=ft.FontWeight.W_600)
     count = ft.Text(size=12, color=p.MUTED)
     query_scope = ft.Text(
         "Showing all organisation tasks for this query",
@@ -195,7 +197,19 @@ def task_board(
             return
 
         shown = filters.matching_tasks(tasks)
-        update_list_layout(shown)
+        personal_view = filters.selected_owner() != "All"
+        if personal_view:
+            shown = [task for task in shown if task.status.casefold() not in COMPLETED_STATUSES]
+        blocking_title.value = "Unblocked" if personal_view else "Bottlenecks"
+        non_blocking_title.value = "Blocked" if personal_view else "Other tasks"
+        if personal_view:
+            blocked = {task.id for task in shown if is_blocked(task, tasks)}
+            first_group = [task for task in shown if task.id not in blocked]
+            second_group = [task for task in shown if task.id in blocked]
+        else:
+            first_group = [task for task in shown if task.bottleneck]
+            second_group = [task for task in shown if not task.bottleneck]
+        update_list_layout(shown, first_group, second_group, personal_view)
         empty_message.value = (
             "No tasks in this organisation yet."
             if not tasks else "No tasks match these filters."
@@ -210,18 +224,20 @@ def task_board(
             key=lambda task: (task.downstream_count, task.score),
             default=None,
         )
-        impact_callout.visible = lead is not None
+        impact_callout.visible = lead is not None and not personal_view
         if lead is not None:
             impact_title.value = lead.title
             impact_detail.value = f"{lead.downstream_count} downstream tasks · {lead.affected_people} people affected"
             impact_callout.on_click = lambda: select(lead)
 
-        for is_blocking, rows, group_count in (
-            (True, blocking_rows, blocking_count),
-            (False, non_blocking_rows, non_blocking_count),
+        for group, rows, group_count in (
+            (first_group, blocking_rows, blocking_count),
+            (second_group, non_blocking_rows, non_blocking_count),
         ):
-            group = [task for task in shown if task.bottleneck == is_blocking]
-            rows.controls = [task_row(task, highest_impact=task is lead) for task in group]
+            rows.controls = [
+                task_row(task, highest_impact=not personal_view and task is lead)
+                for task in group
+            ]
             group_count.value = str(len(group))
 
         count.value = f"{len(shown)} {'task' if len(shown) == 1 else 'tasks'}"
@@ -271,11 +287,11 @@ def task_board(
     blocking_header = bordered_row(table_row(blocking_headers), height=34)
     non_blocking_header = bordered_row(table_row(non_blocking_headers), height=34)
 
-    def task_column(title: str, group_count: ft.Text, header: ft.Container, rows: ft.ListView) -> ft.Column:
+    def task_column(title: ft.Text, group_count: ft.Text, header: ft.Container, rows: ft.ListView) -> ft.Column:
         return ft.Column(
             [
                 ft.Row([
-                    ft.Text(title, size=p.SECTION_TITLE, color=p.TEXT, weight=ft.FontWeight.W_600),
+                    title,
                     group_count,
                 ], spacing=p.SMALL),
                 ft.Column([header, rows], spacing=0, expand=True),
@@ -284,17 +300,19 @@ def task_board(
             expand=True,
         )
 
-    blocking_column = task_column("Bottlenecks", blocking_count, blocking_header, blocking_rows)
-    non_blocking_column = task_column("Other tasks", non_blocking_count, non_blocking_header, non_blocking_rows)
+    blocking_column = task_column(blocking_title, blocking_count, blocking_header, blocking_rows)
+    non_blocking_column = task_column(non_blocking_title, non_blocking_count, non_blocking_header, non_blocking_rows)
     tables = ft.Container(expand=True)
     empty_message = ft.Text(size=p.CONTROL_TEXT, color=p.MUTED)
     empty_state = ft.Container(empty_message, padding=p.MEDIUM, expand=True)
 
-    def update_list_layout(shown: list[Task]) -> None:
+    def update_list_layout(
+        shown: list[Task], first_group: list[Task], second_group: list[Task], personal_view: bool,
+    ) -> None:
         nonlocal compact
 
-        blocking_column.visible = any(task.bottleneck for task in shown)
-        non_blocking_column.visible = any(not task.bottleneck for task in shown)
+        blocking_column.visible = bool(shown) and (personal_view or bool(first_group))
+        non_blocking_column.visible = bool(shown) and (personal_view or bool(second_group))
         two_columns = blocking_column.visible and non_blocking_column.visible
         tables.visible = bool(shown)
         empty_state.visible = not shown

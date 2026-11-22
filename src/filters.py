@@ -15,6 +15,22 @@ SORT_KEYS: dict[str, Callable[[Task], float | str]] = {
     "Deadline": lambda task: task.deadline or "9999",
 }
 
+COMPLETED_STATUSES = {"done", "complete", "completed"}
+
+
+def is_blocked(task: Task, tasks: tuple[Task, ...]) -> bool:
+    """Whether an unfinished hard prerequisite prevents this task from starting."""
+    references = task.blocking_prerequisites
+    if references is None:
+        references = task.prerequisites
+    by_id = {record.id: record for record in tasks}
+    by_title = {record.title: record for record in tasks}
+    for reference in references:
+        prerequisite = by_id.get(reference) or by_title.get(reference)
+        if prerequisite is None or prerequisite.status.casefold() not in COMPLETED_STATUSES:
+            return True
+    return False
+
 
 def visible_tasks(
     tasks: tuple[Task, ...],
@@ -55,6 +71,7 @@ class TaskFilters:
     resize_popover: Callable[[float], None]
     set_query_override: Callable[[bool], None]
     matching_tasks: Callable[[tuple[Task, ...]], list[Task]]
+    selected_owner: Callable[[], str]
 
 
 def task_filters(tasks: tuple[Task, ...], on_change: Callable[[], None]) -> TaskFilters:
@@ -313,4 +330,5 @@ def task_filters(tasks: tuple[Task, ...], on_change: Callable[[], None]) -> Task
         resize_popover=resize_popover,
         set_query_override=set_query_override,
         matching_tasks=matching_tasks,
+        selected_owner=lambda: "All" if query_override else owner.data,
     )

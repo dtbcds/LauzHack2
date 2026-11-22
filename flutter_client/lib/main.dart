@@ -3,10 +3,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import 'motion_extension.dart';
+import 'notifications.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
   await setupDesktop();
+  await initializeRelayNotifications();
 
   if (arguments.isEmpty) {
     throw ArgumentError('Start this client through src/main.py.');

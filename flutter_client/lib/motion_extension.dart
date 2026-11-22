@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import 'graph_motion.dart';
 import 'panel_motion.dart';
+import 'notifications.dart';
 
 class MotionExtension extends FletExtension {
   @override
@@ -22,6 +23,8 @@ class MotionExtension extends FletExtension {
         child = ResizableWorkspace(control: control);
       case 'SettledSize':
         child = SettledSize(control: control);
+      case 'NotificationSink':
+        child = NotificationSink(control: control);
       default:
         return null;
     }
