@@ -52,7 +52,16 @@ specific output would directly improve the target, even if the target does not
 mention it. Vague coordination, possible contact, or work in the same area is
 not enough; require a concrete output and a clear benefit to the target.
 For each candidate, ask whether completing its specific deliverable would
-enable or improve the target. A general request to coordinate with a team
+enable or improve the target. Determine the direction from the supporting
+statement: "A waits for B" supports B as the prerequisite and A as the dependent.
+That statement alone does not support A as a prerequisite of B. If a candidate
+needs the target's output, the candidate is downstream; this alone is not evidence
+that the target needs the candidate. Return a candidate-to-target dependency only
+when evidence supports that direction. Separate evidence may support the opposite
+direction too: if A waits for B and B waits for A, preserve both supported
+dependencies across their respective target checks, even though they form a cycle.
+Do not invent a reverse dependency or suppress a supported one to make a graph
+acyclic. A general request to coordinate with a team
 does not establish a dependency on one of that team's tasks. A review that
 suggests improvements to the target's draft is a soft dependency.
 For example, a dashboard for launch metrics is not a prerequisite for launch
