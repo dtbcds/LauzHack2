@@ -14,7 +14,6 @@ from app.calendar.group import GroupCalendar, GroupConnection
 from app.coordinator.storage import SubmissionStore
 from app.coordinator.refresh import request_collection_refresh
 from analysis_data import analysis_message, refresh_message, tasks_from_snapshot
-from notifications import snapshot_bottlenecks, qualifying_bottlenecks, run_snapshot_check
 
 import flet as ft
 
@@ -73,9 +72,6 @@ def main(page: ft.Page, *, group_secret: str | None = None) -> None:
     store = group.store if group else personal.store if personal else SubmissionStore(database)
     name = "My Calendar" if personal else project
     status = ft.Text(color=palette.MUTED, visible=False)
-    alert_status = ft.Text(color=palette.BOTTLENECK, visible=False, selectable=True)
-    notification_path = ROOT / "data" / "notifications.json"
-    notification_scope = f"{project}/{collection}/{member_label or 'coordinator'}"
     refresh_status = ft.Text(color=palette.MUTED, visible=False)
     refresh_error = None
 
@@ -115,7 +111,7 @@ def main(page: ft.Page, *, group_secret: str | None = None) -> None:
         style=palette.control_button_style(), on_click=refresh_calendars,
     )
     update_analysis = mount_workspace(
-        page, {name: ()}, status_control=ft.Column([refresh_status, status, alert_status], spacing=4),
+        page, {name: ()}, status_control=ft.Column([refresh_status, status], spacing=4),
         refresh_control=refresh_button,
     )
 
@@ -152,25 +148,6 @@ def main(page: ft.Page, *, group_secret: str | None = None) -> None:
                     status.visible = bool(status.value)
                     previous = state
                     changed = True
-                    alert_status.visible = False
-                    if state and state["status"] == "ready" and snapshot is not None:
-                        alerts = qualifying_bottlenecks(snapshot_bottlenecks(snapshot))
-                        if alerts:
-                            titles = "; ".join(f"{item['title']} ({item['owner'] or 'Unknown owner'})" for item in alerts)
-                            alert_status.value = "High-impact bottleneck alert: " + titles
-                            if any(item.get("status") is None or item.get("status") == "unknown" for item in alerts):
-                                alert_status.value += ". Potential bottlenecks; completion status is unknown."
-                            alert_status.visible = True
-                        # Render the in-app alert before waiting on native OS delivery.
-                        page.update()
-                        try:
-                            sent = await asyncio.to_thread(
-                                run_snapshot_check, snapshot, scope=notification_scope, state_path=notification_path,
-                            )
-                            if sent:
-                                print(f"Submitted {len(sent)} bottleneck notification(s).", flush=True)
-                        except Exception as error:
-                            print(f"Native notification failed: {error}. Check the in-app alert.", file=sys.stderr, flush=True)
                 if changed:
                     page.update()
             except (sqlite3.Error, ValueError, KeyError, TypeError) as error:

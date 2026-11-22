@@ -114,33 +114,6 @@ These tests cover independent tasks, ordinary chains, an implicit grading step,
 and a genuine circular dependency. Errors distinguish missing keys, authentication,
 network, quota, incomplete output, and validation failures.
 
-## Desktop bottleneck notifications
-
-The desktop UI automatically checks each completed (`ready`) analysis snapshot.
-It shows a persistent in-app alert and submits native Windows/macOS notifications
-for bottlenecks with priority at least 75 and either three downstream tasks or two
-affected coworkers. Partial or failed analyses do not notify. Unknown Calendar
-completion status is labelled as a potential bottleneck; completed tasks never notify.
-
-Native submissions have a four-hour cooldown per task, project/collection, and
-viewer. The app persists cooldowns in ignored `data/notifications.json`, so refreshes
-and restarts do not spam alerts. Failed submissions do not start the cooldown.
-The in-app alert remains available while qualifying tasks exist, regardless of
-native delivery or cooldown. It clears on a later analysis without qualifying tasks.
-
-Windows uses `winotify` (included in requirements); macOS uses `osascript`. OS
-notification settings and Focus/Do Not Disturb can suppress a submitted pop-up.
-The app can confirm submission, but cannot confirm that the OS displayed it.
-Test native delivery without Calendar, OpenAI charges, or cooldown changes:
-
-```sh
-python -m notifications --test
-```
-
-For the current Report → Presentation → Grade presentation chain with three
-owners, Report can qualify as a potential bottleneck because it affects two
-coworkers and has high priority. Restart the UI after pulling this change.
-
 ## UI graph data
 
 Use `graph_to_ui_data(graph)` to give a Flet view plain dictionaries instead of

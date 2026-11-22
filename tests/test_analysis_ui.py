@@ -1,5 +1,4 @@
 import sys
-import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / 'src'))
@@ -164,46 +163,3 @@ def test_group_page_mounts_without_terminal_input(tmp_path, monkeypatch):
     assert len(page.controls) == 1
     assert len(page.jobs) == 3
     assert 'Group (hatem)' in page.title
-
-
-@pytest.mark.parametrize('state_status', ['ready', 'processing', 'failed'])
-def test_ui_notifies_only_completed_analysis_and_shows_in_app_alert(tmp_path, monkeypatch, state_status):
-    import asyncio
-    import importlib.util
-    from graph_construction import build_graph, graph_to_ui_data
-    spec = importlib.util.spec_from_file_location('relay_alert_page', Path(__file__).parents[1] / 'src/main.py')
-    ui = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ui)
-    monkeypatch.setattr(ui, 'ROOT', tmp_path)
-    monkeypatch.setenv('RELAY_MODE', 'coordinator')
-    monkeypatch.setenv('RELAY_DATABASE', str(tmp_path / 'db.sqlite3'))
-    tasks = [dict(id=key, title=key, owner=owner, status=None, deadline='2026-11-22')
-             for key, owner in [('A', 'nil'), ('B', 'dany'), ('C', 'hatem')]]
-    links = [dict(prerequisite_task_id='A', dependent_task_id='B', type='hard'),
-             dict(prerequisite_task_id='B', dependent_task_id='C', type='hard')]
-    snapshot = graph_to_ui_data(build_graph(tasks, links), now='2026-11-21T12:00:00+00:00')
-    state = dict(status=state_status, result=snapshot, error='test failure' if state_status == 'failed' else None)
-    monkeypatch.setattr(ui.SubmissionStore, 'get_analysis', lambda *args: state)
-    calls = []
-    monkeypatch.setattr(ui, 'run_snapshot_check', lambda snapshot, **kwargs: calls.append(kwargs) or [])
-    captured = {}
-    monkeypatch.setattr(ui, 'mount_workspace', lambda page, groups, **kwargs: captured.update(kwargs) or (lambda *args: None))
-    class Page:
-        class Window: pass
-        window = Window()
-        jobs = []
-        def update(self): pass
-        def run_task(self, callback): self.jobs.append(callback)
-    class StopLoop(Exception): pass
-    async def stop(*args): raise StopLoop()
-    monkeypatch.setattr(ui.asyncio, 'sleep', stop)
-    page = Page()
-    ui.main(page)
-    with pytest.raises(StopLoop):
-        asyncio.run(page.jobs[0]())
-    banner = captured['status_control'].controls[2]
-    assert len(calls) == (1 if state_status == 'ready' else 0)
-    assert banner.visible == (state_status == 'ready')
-    if state_status == 'ready':
-        assert 'A (nil)' in banner.value
-        assert 'completion status is unknown' in banner.value
