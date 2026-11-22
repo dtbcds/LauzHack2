@@ -1,6 +1,7 @@
 """Extract task dependencies with the local Ollama model."""
 
 import json
+from copy import deepcopy
 import os
 
 import ollama
@@ -99,6 +100,15 @@ def extract_dependencies(target_task: dict, candidate_tasks: list[dict]) -> dict
         for task in candidate_tasks
         if isinstance(task.get("id"), str) and task["id"] and task["id"] != target_id
     }
+    if not candidate_ids:
+        return {"target_task_id": target_id, "dependencies": []}
+    # Constrain copied identifiers at generation time; Calendar IDs are long and
+    # the model can otherwise shorten them or return a candidate as the target.
+    schema = deepcopy(RESPONSE_SCHEMA)
+    schema["properties"]["target_task_id"]["enum"] = [target_id]
+    fields = schema["properties"]["dependencies"]["items"]["properties"]
+    fields["dependent_task_id"]["enum"] = [target_id]
+    fields["prerequisite_task_id"]["enum"] = sorted(candidate_ids)
     try:
         response = ollama.chat(
             model=MODEL,
@@ -108,7 +118,7 @@ def extract_dependencies(target_task: dict, candidate_tasks: list[dict]) -> dict
                     "content": build_user_message(target_task, candidate_tasks),
                 }
             ],
-            format=RESPONSE_SCHEMA,
+            format=schema,
             options={"temperature": 0, "seed": 0},
         )
         content = response.message.content

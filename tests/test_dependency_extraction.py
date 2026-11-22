@@ -189,3 +189,30 @@ def test_live_qwen_scenarios(monkeypatch):
     print(json.dumps({"overall": [sum(row["correct"] for row in rows), len(rows)],
                       "by_class": totals}))
     assert all(row["correct"] for row in rows)
+
+
+def test_generation_schema_limits_ids_to_current_request(monkeypatch):
+    requests = []
+    def chat(**kwargs):
+        requests.append(kwargs)
+        message = json.loads(kwargs['messages'][0]['content'].split('Tasks:\n', 1)[1])
+        return SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+            'target_task_id': message['target_task']['id'], 'dependencies': [],
+        })))
+    monkeypatch.setattr(extraction.ollama, 'chat', chat)
+    extraction.extract_dependencies(target, candidates)
+    extraction.extract_dependencies(candidates[0], [target])
+    props = requests[0]['format']['properties']
+    assert props['target_task_id']['enum'] == [target['id']]
+    fields = props['dependencies']['items']['properties']
+    assert fields['dependent_task_id']['enum'] == [target['id']]
+    assert fields['prerequisite_task_id']['enum'] == ['task_001', 'task_002']
+    assert requests[1]['format']['properties']['target_task_id']['enum'] == ['task_001']
+    assert 'enum' not in extraction.RESPONSE_SCHEMA['properties']['target_task_id']
+
+
+def test_no_candidates_does_not_call_model(monkeypatch):
+    def unexpected(**kwargs):
+        raise AssertionError('No model call needed')
+    monkeypatch.setattr(extraction.ollama, 'chat', unexpected)
+    assert extraction.extract_dependencies(target, []) == {'target_task_id': target['id'], 'dependencies': []}
