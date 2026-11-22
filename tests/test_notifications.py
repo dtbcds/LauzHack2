@@ -140,3 +140,45 @@ def test_macos_state_path_uses_application_support(monkeypatch, tmp_path):
         tmp_path / "Library" / "Application Support" / "DependencyIntelligence"
         / "notification_timestamps.json"
     )
+
+
+def test_unknown_status_alerts_are_potential_and_completed_are_excluded(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(notifications, 'send_notification', lambda task: calls.append(task) or True)
+    tasks = [bottleneck(status=None), bottleneck(task_id='done', status='done')]
+    assert notifications.run_bottleneck_check(tasks, state_path=tmp_path / 'state.json', now=NOW) == ['task-1']
+    assert len(calls) == 1
+
+
+def test_snapshot_adapter_and_scoped_cooldown(monkeypatch, tmp_path):
+    from graph_construction import build_graph, graph_to_ui_data
+    tasks = [dict(id=key, title=key, description='', owner=owner, status=None, deadline='2026-11-22')
+             for key, owner in [('A', 'nil'), ('B', 'dany'), ('C', 'hatem')]]
+    links = [dict(prerequisite_task_id='A', dependent_task_id='B', type='hard'),
+             dict(prerequisite_task_id='B', dependent_task_id='C', type='hard')]
+    snapshot = graph_to_ui_data(build_graph(tasks, links), now=NOW)
+    calls = []
+    monkeypatch.setattr(notifications, 'send_notification', lambda task: calls.append(task) or True)
+    path = tmp_path / 'state.json'
+    assert notifications.run_snapshot_check(snapshot, scope='demo/round-1/nil', state_path=path, now=NOW) == ['A']
+    assert calls[0]['status'] is None
+    assert calls[0]['affected_people'] == 2
+    assert notifications.run_snapshot_check(snapshot, scope='demo/round-1/nil', state_path=path, now=NOW) == []
+    assert notifications.run_snapshot_check(snapshot, scope='demo/round-2/nil', state_path=path, now=NOW) == ['A']
+
+
+def test_native_unknown_status_uses_potential_wording(monkeypatch):
+    calls = []
+    monkeypatch.setattr(notifications.platform, 'system', lambda: 'Darwin')
+    monkeypatch.setattr(notifications.subprocess, 'run', lambda args, **kwargs: calls.append(args))
+    assert notifications.send_notification(bottleneck(status=None))
+    assert calls[0][-2] == 'Potential bottleneck needs attention'
+    assert 'Completion status: unknown' in calls[0][-1]
+
+
+def test_manual_notification_test_has_no_model_or_cooldown(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(notifications, 'send_notification', lambda task, **kwargs: calls.append((task, kwargs)) or True)
+    assert notifications.main(['--test']) == 0
+    assert calls[0][1]['notification_title'] == 'Relay notification test'
+    assert 'submitted' in capsys.readouterr().out
