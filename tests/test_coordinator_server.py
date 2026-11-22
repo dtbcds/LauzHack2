@@ -1,8 +1,10 @@
 import json
 import os
+import sqlite3
 import stat
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
@@ -17,7 +19,13 @@ class CoordinatorServerTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.database_path = Path(self.directory.name) / "coordinator.sqlite3"
-        self.server = CoordinatorServer(("127.0.0.1", 0), self.database_path)
+        self.analysis_inputs = []
+
+        def analyze(submissions):
+            self.analysis_inputs.append(submissions)
+            return {"event_count": sum(len(item["events"]) for item in submissions)}
+
+        self.server = CoordinatorServer(("127.0.0.1", 0), self.database_path, analyzer=analyze)
         self.secret = self.server.store.register_member("demo", "dany")
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -40,6 +48,15 @@ class CoordinatorServerTests(unittest.TestCase):
             method="POST",
         )
         return urlopen(request, timeout=2)
+
+    def wait_for_analysis(self, revision):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            state = self.server.store.get_analysis("demo", "round-1")
+            if state and state["revision"] == revision and state["status"] in ("ready", "failed"):
+                return state
+            time.sleep(0.01)
+        self.fail(f"analysis revision {revision} did not finish")
 
     def test_receives_and_replaces_member_snapshot(self):
         event = prepare_event(
@@ -114,6 +131,91 @@ class CoordinatorServerTests(unittest.TestCase):
     def test_health_route(self):
         with urlopen(self.base_url + "/health", timeout=2) as response:
             self.assertEqual(json.load(response), {"status": "ok"})
+
+    def test_analysis_reruns_after_each_snapshot_including_deletion(self):
+        payload = {
+            "project_id": "demo", "collection_id": "round-1", "member_id": "dany",
+            "events": [{"id": "event-1", "member_id": "dany"}],
+        }
+        with self.post(payload) as response:
+            receipt = json.load(response)
+        first = self.wait_for_analysis(receipt["analysis_revision"])
+        self.assertEqual(first["result"], {"event_count": 1})
+
+        payload["events"] = []
+        with self.post(payload) as response:
+            receipt = json.load(response)
+        second = self.wait_for_analysis(receipt["analysis_revision"])
+        self.assertEqual(second["result"], {"event_count": 0})
+        self.assertEqual(len(self.analysis_inputs), 2)
+
+    def test_analysis_failure_does_not_reject_submission(self):
+        def fail(_submissions):
+            raise RuntimeError("model unavailable")
+
+        self.server.analyzer = fail
+        payload = {"project_id": "demo", "collection_id": "round-1", "member_id": "dany", "events": []}
+        with self.post(payload) as response:
+            receipt = json.load(response)
+        state = self.wait_for_analysis(receipt["analysis_revision"])
+        self.assertEqual(state["status"], "failed")
+        self.assertEqual(state["error"], "model unavailable")
+        self.assertEqual(self.server.store.list_for_collection("demo", "round-1"), [payload])
+
+    def test_new_upload_supersedes_an_analysis_already_running(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_analysis(submissions):
+            count = sum(len(item["events"]) for item in submissions)
+            if count == 1:
+                started.set()
+                release.wait(timeout=2)
+            return {"event_count": count}
+
+        self.server.analyzer = slow_analysis
+        payload = {
+            "project_id": "demo", "collection_id": "round-1", "member_id": "dany",
+            "events": [{"id": "event-1", "member_id": "dany"}],
+        }
+        with self.post(payload):
+            pass
+        self.assertTrue(started.wait(timeout=2))
+        payload["events"] = []
+        with self.post(payload) as response:
+            revision = json.load(response)["analysis_revision"]
+        release.set()
+        state = self.wait_for_analysis(revision)
+        self.assertEqual(state["result"], {"event_count": 0})
+
+    def test_existing_submissions_are_analyzed_when_server_starts(self):
+        legacy_path = Path(self.directory.name) / "legacy.sqlite3"
+        payload = {"project_id": "demo", "collection_id": "round-1", "member_id": "dany", "events": []}
+        with sqlite3.connect(legacy_path) as database:
+            database.execute("""
+                CREATE TABLE submissions (
+                    project_id TEXT NOT NULL, collection_id TEXT NOT NULL,
+                    member_id TEXT NOT NULL, received_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY (project_id, collection_id, member_id)
+                )
+            """)
+            database.execute(
+                "INSERT INTO submissions VALUES (?, ?, ?, ?, ?)",
+                ("demo", "round-1", "dany", "2026-11-22T00:00:00+00:00", json.dumps(payload)),
+            )
+
+        with CoordinatorServer(
+            ("127.0.0.1", 0), legacy_path,
+            analyzer=lambda submissions: {"event_count": sum(len(item["events"]) for item in submissions)},
+        ) as restarted:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                state = restarted.store.get_analysis("demo", "round-1")
+                if state and state["status"] == "ready":
+                    break
+                time.sleep(0.01)
+            self.assertEqual(state["result"], {"event_count": 0})
 
 
 if __name__ == "__main__":

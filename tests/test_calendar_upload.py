@@ -14,7 +14,8 @@ class CalendarUploadTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.server = CoordinatorServer(
-            ("127.0.0.1", 0), Path(self.directory.name) / "coordinator.sqlite3"
+            ("127.0.0.1", 0), Path(self.directory.name) / "coordinator.sqlite3",
+            analyzer=lambda submissions: {"event_count": sum(len(item["events"]) for item in submissions)},
         )
         self.secret = self.server.store.register_member("demo", "dany")
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

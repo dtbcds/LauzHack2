@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import queue
 import sqlite3
 import ssl
+import sys
+import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from app.coordinator.analysis import analyze_submissions
 from app.coordinator.storage import SubmissionStore
 
 MAX_BODY_BYTES = 2_000_000
@@ -49,9 +54,48 @@ class CoordinatorServer(ThreadingHTTPServer):
 
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], database_path: str | Path = "data/coordinator.sqlite3"):
+    def __init__(
+        self, address: tuple[str, int], database_path: str | Path = "data/coordinator.sqlite3",
+        analyzer: Callable[[list[dict[str, Any]]], dict[str, Any]] = analyze_submissions,
+    ):
         self.store = SubmissionStore(database_path)
+        self.analyzer = analyzer
+        self.analysis_queue: queue.Queue[tuple[str, str, int] | None] = queue.Queue()
         super().__init__(address, CoordinatorHandler)
+        self.analysis_worker = threading.Thread(target=self._run_analysis, daemon=True)
+        self.analysis_worker.start()
+        for job in self.store.pending_analyses():
+            self.analysis_queue.put(job)
+
+    def _run_analysis(self) -> None:
+        while (job := self.analysis_queue.get()) is not None:
+            project_id, collection_id, revision = job
+            try:
+                if not self.store.mark_analysis_processing(project_id, collection_id, revision):
+                    continue
+                started = time.monotonic()
+                submissions = self.store.list_for_collection(project_id, collection_id)
+                result = self.analyzer(submissions)
+                if self.store.finish_analysis(project_id, collection_id, revision, result=result):
+                    print(
+                        f"Analysis ready for {project_id}/{collection_id} revision {revision} "
+                        f"({time.monotonic() - started:.1f}s)",
+                        flush=True,
+                    )
+            except Exception as exc:
+                if self.store.finish_analysis(project_id, collection_id, revision, error=str(exc)):
+                    print(
+                        f"Analysis failed for {project_id}/{collection_id} revision {revision}: {exc}",
+                        file=sys.stderr, flush=True,
+                    )
+            finally:
+                self.analysis_queue.task_done()
+        self.analysis_queue.task_done()
+
+    def server_close(self) -> None:
+        self.analysis_queue.put(None)
+        super().server_close()
+        self.analysis_worker.join(timeout=2)
 
 
 class CoordinatorHandler(BaseHTTPRequestHandler):
@@ -109,7 +153,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            self.server.store.save(payload)
+            revision = self.server.store.save(payload)
+            self.server.analysis_queue.put((payload["project_id"], payload["collection_id"], revision))
         except sqlite3.Error:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not save submission"})
             return
@@ -119,6 +164,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             "collection_id": payload["collection_id"],
             "member_id": payload["member_id"],
             "event_count": len(payload["events"]),
+            "analysis_revision": revision,
+            "analysis_status": "pending",
         })
 
 
