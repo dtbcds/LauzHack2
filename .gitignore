@@ -8,6 +8,9 @@ token.json
 tokens/
 data/
 
+# Macos
+.DS_Store
+
 # Dependencies
 .venv/
 venv/
