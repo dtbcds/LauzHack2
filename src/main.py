@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from app.calendar.personal import PersonalCalendar
 from app.coordinator.storage import SubmissionStore
 from app.coordinator.refresh import request_collection_refresh
 from analysis_data import analysis_message, refresh_message, tasks_from_snapshot
@@ -35,8 +36,15 @@ def main(page: ft.Page) -> None:
     project = os.environ.get("RELAY_PROJECT_ID", "demo")
     collection = os.environ.get("RELAY_COLLECTION_ID", "round-1")
     database = Path(os.environ.get("RELAY_DATABASE", str(ROOT / "data/coordinator.sqlite3")))
-    store = SubmissionStore(database)
-    name = project
+    personal = None
+    if os.environ.get("RELAY_MODE", "coordinator") == "personal":
+        personal = PersonalCalendar(
+            os.environ.get("RELAY_MEMBER_ID", ""), database,
+            credentials=str(ROOT / "credentials.json"),
+        )
+        project, collection = personal.project_id, personal.collection_id
+    store = personal.store if personal else SubmissionStore(database)
+    name = "My Calendar" if personal else project
     status = ft.Text(color=palette.MUTED, visible=False)
     refresh_status = ft.Text(color=palette.MUTED, visible=False)
     refresh_error = None
@@ -49,11 +57,18 @@ def main(page: ft.Page) -> None:
         refresh_error = None
         page.update()
         try:
-            progress = await asyncio.to_thread(
-                request_collection_refresh, project, collection, database=database,
-            )
-            refresh_status.value = refresh_message(progress)
-        except (sqlite3.Error, OSError, ValueError) as error:
+            if personal:
+                refresh_status.value = "Fetching your Calendar and analysing dependencies…"
+                refresh_status.visible = True
+                page.update()
+                await asyncio.to_thread(personal.sync)
+                refresh_status.value = "Calendar fetched."
+            else:
+                progress = await asyncio.to_thread(
+                    request_collection_refresh, project, collection, database=database,
+                )
+                refresh_status.value = refresh_message(progress)
+        except Exception as error:
             refresh_error = f"Could not request refresh: {error}"
             refresh_status.value = refresh_error
         finally:
@@ -63,7 +78,7 @@ def main(page: ft.Page) -> None:
 
     refresh_button = ft.TextButton(
         "Refresh", icon=ft.Icons.REFRESH,
-        tooltip="Ask members to sync their Calendars",
+        tooltip="Fetch my Calendar" if personal else "Ask members to sync their Calendars",
         style=palette.control_button_style(), on_click=refresh_calendars,
     )
     update_analysis = mount_workspace(
@@ -76,10 +91,12 @@ def main(page: ft.Page) -> None:
         previous_progress = object()
         while True:
             try:
-                state = await asyncio.to_thread(store.get_analysis, project, collection)
-                progress = await asyncio.to_thread(store.get_refresh_status, project, collection)
+                state = (await asyncio.to_thread(personal.view) if personal else
+                         await asyncio.to_thread(store.get_analysis, project, collection))
+                progress = ({} if personal else
+                            await asyncio.to_thread(store.get_refresh_status, project, collection))
                 changed = progress != previous_progress
-                if changed:
+                if changed and not personal:
                     refresh_status.value = refresh_error or refresh_message(progress)
                     refresh_status.visible = bool(refresh_status.value)
                     previous_progress = progress
@@ -88,6 +105,9 @@ def main(page: ft.Page) -> None:
                     tasks = tasks_from_snapshot(snapshot) if snapshot is not None else ()
                     update_analysis(name, tasks, snapshot)
                     status.value = analysis_message(state)
+                    if personal and state and state["status"] != "ready":
+                        status.value = (f"Dependency analysis failed: {state['error']}" if state["status"] == "failed"
+                                        else "Analysing dependencies…") + " Showing your Calendar items."
                     status.visible = bool(status.value)
                     previous = state
                     changed = True
@@ -100,6 +120,8 @@ def main(page: ft.Page) -> None:
             await asyncio.sleep(1)
 
     page.run_task(follow_analysis)
+    if personal:
+        page.run_task(refresh_calendars)
 
 
 if __name__ == "__main__":

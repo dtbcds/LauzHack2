@@ -67,6 +67,34 @@ with `.venv/bin/python -m pip install -r requirements.txt`. Rebuild after Dart
 changes; Python changes only require restarting the app. The launcher selects
 the Windows or macOS build automatically.
 
+## Personal Calendar on each computer
+
+To fetch and analyse your own Calendar locally without running a coordinator,
+set personal mode before starting the UI. On Dany's Windows PowerShell:
+
+```powershell
+$env:RELAY_MODE = "personal"
+$env:RELAY_MEMBER_ID = "dany"
+.\.venv\Scripts\python.exe src/main.py
+```
+
+The UI fetches the next 14 days from the primary Calendar at startup. Refresh
+fetches again and runs analysis on this computer. Calendar events and linked
+Google Tasks notes use the member's existing local OAuth token. Keep
+`credentials.json` in the repository root; Google may request authorization.
+The Windows custom Flutter client must already be built as described above.
+
+Items appear while analysis runs, and remain visible if the local model fails.
+For dependencies, run Ollama locally with the configured `DEPENDENCY_MODEL`
+(default `qwen3:8b`). Personal data is stored under a separate collection
+`personal:<member_id>/calendar`; no upload secret or HTTP server is required.
+This mode displays only your Calendar. Keep the separate upload client running
+if you also want to send snapshots to the group coordinator.
+
+On macOS, set `RELAY_MODE=personal RELAY_MEMBER_ID=nil` before the launch command.
+To return to coordinator mode in PowerShell, run
+`$env:RELAY_MODE = "coordinator"` before launching again.
+
 ## Fine-tune task dependency classification
 
 `train_dependency_model.py` fine-tunes the Hugging Face `Qwen/Qwen3-8B`
