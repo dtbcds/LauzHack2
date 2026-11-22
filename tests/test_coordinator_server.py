@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import sqlite3
@@ -131,6 +132,14 @@ class CoordinatorServerTests(unittest.TestCase):
     def test_health_route(self):
         with urlopen(self.base_url + "/health", timeout=2) as response:
             self.assertEqual(json.load(response), {"status": "ok"})
+
+    def test_second_server_reports_port_in_use_without_cleanup_error(self):
+        with self.assertRaises(OSError) as raised:
+            CoordinatorServer(
+                ("127.0.0.1", self.server.server_port), self.database_path,
+                analyzer=lambda _submissions: {},
+            )
+        self.assertEqual(raised.exception.errno, errno.EADDRINUSE)
 
     def test_analysis_reruns_after_each_snapshot_including_deletion(self):
         payload = {

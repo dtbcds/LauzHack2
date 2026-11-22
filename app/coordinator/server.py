@@ -93,9 +93,12 @@ class CoordinatorServer(ThreadingHTTPServer):
         self.analysis_queue.task_done()
 
     def server_close(self) -> None:
-        self.analysis_queue.put(None)
+        worker = getattr(self, "analysis_worker", None)
+        if worker is not None:
+            self.analysis_queue.put(None)
         super().server_close()
-        self.analysis_worker.join(timeout=2)
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=2)
 
 
 class CoordinatorHandler(BaseHTTPRequestHandler):
