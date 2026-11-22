@@ -64,7 +64,7 @@ FINANCE_TASKS = (
         "task_005",
         "Review presentation",
         "Review the completed analysis and presentation charts before delivery.",
-        "You",
+        "Alex",
         "2026-11-24T10:00:00",
         44,
         downstream_count=1,

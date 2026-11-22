@@ -12,15 +12,15 @@ from queries import TaskQueries
 from query_answers import build_answer
 
 QUESTIONS = {
-    "plan": ("Plan my work", "Find the order that keeps your teammates moving."),
+    "plan": ("Plan work", "Find an owner’s task order that keeps the team moving."),
     "slip": ("Check a delay", "See what work is at risk if a task slips."),
     "blocked": (
         "Trace blockers",
         "See what’s holding up a task and who to follow up with.",
     ),
     "teammate": (
-        "Unblock a teammate",
-        "Find the task that would free up the most work for them.",
+        "Unblock an owner",
+        "Find one owner’s task that frees up the most work for another.",
     ),
 }
 
@@ -117,7 +117,7 @@ def ask_panel(
 
     owner, _ = p.select_menu("Choose owner", owners, owner_changed, expand=True)
     teammate, replace_teammates = p.select_menu(
-        "Choose teammate", owners, inputs_changed, expand=True
+        "Choose blocked owner", owners, inputs_changed, expand=True
     )
     task_choice, _ = p.select_menu(
         "Choose task",
@@ -155,12 +155,12 @@ def ask_panel(
     deadline.on_focus = lambda: set_deadline_focus(True)
     deadline.on_blur = lambda: set_deadline_focus(False)
 
-    owner_field = QueryField("Your name", owner, lambda: owner.data)
+    owner_field = QueryField("Owner", owner, lambda: owner.data)
     task_field = QueryField("Task", task_choice, lambda: task_choice.data)
     deadline_field = QueryField(
         "Deadline", deadline_box, lambda: (deadline.value or "").strip()
     )
-    teammate_field = QueryField("Teammate", teammate, lambda: teammate.data)
+    teammate_field = QueryField("Blocked owner", teammate, lambda: teammate.data)
 
     fields = {
         "plan": (owner_field, deadline_field),

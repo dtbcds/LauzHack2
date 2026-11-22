@@ -67,10 +67,9 @@ class TaskGraph:
         self._scene = ft.Stack(width=1, height=1)
         self._message = ft.Text(size=p.CONTROL_TEXT, color=p.MUTED, visible=False)
         self._task_count = ft.Text(size=p.SECTION_TITLE, color=p.TEXT, weight=ft.FontWeight.W_600)
-        self._blocking_you_count = ft.Text(size=p.BODY_TEXT, color=p.ACCENT)
-        self._blocking_others_count = ft.Text(size=p.BODY_TEXT, color=p.BOTTLENECK)
+        self._bottleneck_count = ft.Text(size=p.BODY_TEXT, color=p.BOTTLENECK)
         self._scope_summary = ft.Column(
-            [self._task_count, self._blocking_you_count, self._blocking_others_count],
+            [self._task_count, self._bottleneck_count],
             spacing=p.SMALL,
         )
 
@@ -258,18 +257,8 @@ class TaskGraph:
             if downstream:
                 marked_tasks[key] = downstream
 
-        blocks_you = {
-            key for key, downstream in marked_tasks.items()
-            if any(self._tasks[task_id].owner == "You" for task_id in downstream)
-        }
-        blocks_others = {
-            key for key, downstream in marked_tasks.items()
-            if any(self._tasks[task_id].owner not in {"You", "", "Unknown"}
-                   for task_id in downstream)
-        }
         self._task_count.value = f"{len(self._tasks)} tasks"
-        self._blocking_you_count.value = f"● Blocking you {len(blocks_you)}"
-        self._blocking_others_count.value = f"● Blocking others {len(blocks_others)}"
+        self._bottleneck_count.value = f"● Bottlenecks {len(marked_tasks)}"
 
         arrivals: dict[str, list[str]] = {}
 
@@ -331,15 +320,11 @@ class TaskGraph:
         for target, sources in arrivals.items():
             task = self._tasks[target]
             left, top = positions[target]
-            affects_you = any(source in blocks_you for source in sources)
-            affects_others = any(source in blocks_others for source in sources)
             prerequisites = tuple(self._tasks[source].title for source in sources)
 
             marker = bottleneck_marker(
                 task, partial(self._on_select, task),
                 waiting_on=prerequisites,
-                blocks_you=affects_you,
-                blocks_others=affects_others,
             )
             if self._horizontal:
                 marker.left = left - HOTSPOT_SIZE / 2

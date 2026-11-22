@@ -18,22 +18,15 @@ def bottleneck_marker(
     on_select: Callable[[], None],
     *,
     waiting_on: tuple[str, ...],
-    blocks_you: bool,
-    blocks_others: bool,
 ) -> ft.Container:
-    label = "Blocks your work" if blocks_you else "Blocks other people’s work"
-    if blocks_you and blocks_others:
-        label = "Blocks your work and other people’s work"
-
     prerequisites = ", ".join(waiting_on)
     explanation = f"{task.title}\nWaiting on bottlenecks: {prerequisites}"
-    color = p.ACCENT if blocks_you else p.BOTTLENECK
-    outer_color = p.BOTTLENECK if blocks_others else color
+    color = p.BOTTLENECK
     rings: list[ft.Control] = [
         ft.Container(
             width=HOTSPOT_SIZE, height=HOTSPOT_SIZE, border_radius=HOTSPOT_SIZE / 2,
-            bgcolor=ft.Colors.with_opacity(0.12, outer_color),
-            border=ft.Border.all(1, outer_color),
+            bgcolor=ft.Colors.with_opacity(0.12, color),
+            border=ft.Border.all(1, color),
         ),
         ft.Container(
             width=20, height=20, border_radius=10,
@@ -47,7 +40,7 @@ def bottleneck_marker(
         width=HOTSPOT_SIZE,
         height=HOTSPOT_SIZE,
         border_radius=HOTSPOT_SIZE / 2,
-        tooltip=f"{label}\n{explanation}",
+        tooltip=explanation,
         on_click=on_select,
         data=task.id,
     )

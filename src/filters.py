@@ -8,7 +8,7 @@ import flet as ft
 import palette as p
 from component import Task
 
-SORT_KEYS: dict[str, Callable[[Task], int | str]] = {
+SORT_KEYS: dict[str, Callable[[Task], float | str]] = {
     "Priority": lambda task: -task.score,
     "Dependency impact": lambda task: -task.downstream_count,
     "People affected": lambda task: -task.affected_people,
@@ -76,16 +76,15 @@ def task_filters(tasks: tuple[Task, ...], on_change: Callable[[], None]) -> Task
 
     def owner_choices(records: tuple[Task, ...]) -> dict[str, str]:
         owners = sorted({task.owner for task in records if task.owner})
-        choices = {"You": "You", "All": "All owners"}
+        choices = {"All": "All owners"}
 
         for name in owners:
-            if name != "You":
-                choices[name] = name
+            choices[name] = name
 
         return choices
 
     owner, replace_owners = p.select_menu(
-        "Person",
+        "Owner",
         owner_choices(tasks),
         on_change,
         value="All",

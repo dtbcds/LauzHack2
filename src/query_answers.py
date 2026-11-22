@@ -44,10 +44,10 @@ def _plan_answer(queries: TaskQueries, owner: str, deadline: str) -> Answer:
         return Answer(f"No unfinished work for {owner} is due or needed by {deadline}.")
 
     first = steps[0]
-    text = f"Start with {first.task.title}. It’s needed by {first.needed_by:%d %b %Y}."
+    text = f"Start {owner}’s plan with {first.task.title}. It’s needed by {first.needed_by:%d %b %Y}."
 
     if first.external_blockers:
-        text = f"Put {first.task.title} first in your plan."
+        text = f"Put {first.task.title} first in {owner}’s plan."
         blocker = queries.next_blocker(first.external_blockers)
 
         if blocker is None:
@@ -157,7 +157,7 @@ def _teammate_answer(queries: TaskQueries, owner: str, teammate: str) -> Answer:
             f"None of {owner}’s unfinished tasks currently unblock work for {teammate}."
         )
 
-    rows = [(impact.task, f"Your task · {owner}")]
+    rows = [(impact.task, f"Prerequisite · {owner}")]
     related = []
     ready = []
     waiting = []
@@ -171,9 +171,9 @@ def _teammate_answer(queries: TaskQueries, owner: str, teammate: str) -> Answer:
             related.extend(blockers)
         else:
             ready.append(task)
-            rows.append((task, f"{teammate} · Can start once your task is done"))
+            rows.append((task, f"{teammate} · Can start once this prerequisite is done"))
 
-    text = f"Prioritize {impact.task.title}."
+    text = f"Prioritize {impact.task.title} for {owner}."
     if len(ready) == 1:
         text += f" Once it’s done, {teammate} can start {ready[0].title}."
     elif ready:
