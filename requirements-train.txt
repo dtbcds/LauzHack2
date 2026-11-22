@@ -1,0 +1,8 @@
+-r requirements.txt
+torch
+transformers>=4.51.0
+datasets
+accelerate
+bitsandbytes
+peft
+trl
