@@ -14,7 +14,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from app.coordinator.analysis import analyze_submissions
 from app.coordinator.storage import SubmissionStore
@@ -106,6 +106,12 @@ class CoordinatorServer(ThreadingHTTPServer):
 class CoordinatorHandler(BaseHTTPRequestHandler):
     server: CoordinatorServer
 
+    def _is_authorized(self, project_id: str, member_id: str) -> bool:
+        authorization = self.headers.get("Authorization", "")
+        scheme, separator, secret = authorization.partition(" ")
+        return (bool(separator) and scheme.lower() == "bearer" and bool(secret)
+                and self.server.store.is_authorized(project_id, member_id, secret))
+
     def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         data = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -115,10 +121,43 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self) -> None:
-        if urlsplit(self.path).path == "/health":
+        parts = urlsplit(self.path)
+        if parts.path == "/health":
             self._send_json(HTTPStatus.OK, {"status": "ok"})
-        else:
+            return
+        if parts.path != "/refresh-requests":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "Unknown route"})
+            return
+        try:
+            query = parse_qs(parts.query, strict_parsing=True)
+            if (set(query) != {"project_id", "collection_id", "member_id", "after"}
+                    or any(len(values) != 1 for values in query.values())):
+                raise ValueError("Expected project_id, collection_id, member_id, and after")
+            project_id, collection_id, member_id = (
+                query[key][0] for key in ("project_id", "collection_id", "member_id")
+            )
+            if not all(value.strip() for value in (project_id, collection_id, member_id)):
+                raise ValueError("IDs must be non-empty")
+            after = int(query["after"][0])
+            if after < 0:
+                raise ValueError("after must be non-negative")
+        except (ValueError, KeyError, IndexError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid refresh request query"})
+            return
+        try:
+            if not self._is_authorized(project_id, member_id):
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Invalid member secret"})
+                return
+            deadline = time.monotonic() + 20
+            while True:
+                revision = self.server.store.get_refresh_revision(project_id, collection_id)
+                if revision > after or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.25)
+        except sqlite3.Error:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not read refresh request"})
+            return
+        self._send_json(HTTPStatus.OK, {"revision": revision})
 
     def do_POST(self) -> None:
         if urlsplit(self.path).path != "/submissions":
@@ -143,13 +182,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
 
-        authorization = self.headers.get("Authorization", "")
-        scheme, separator, secret = authorization.partition(" ")
         try:
-            authorized = (bool(separator) and scheme.lower() == "bearer" and bool(secret)
-                          and self.server.store.is_authorized(
-                              payload["project_id"], payload["member_id"], secret
-                          ))
+            authorized = self._is_authorized(payload["project_id"], payload["member_id"])
         except sqlite3.Error:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not check member secret"})
             return
@@ -158,9 +192,14 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            revision = self.server.store.save(payload)
+            refresh_header = self.headers.get("X-Refresh-Revision")
+            refresh_revision = int(refresh_header) if refresh_header is not None else None
+            revision = self.server.store.save(payload, refresh_revision=refresh_revision)
             if self.server.analysis_worker is not None:
                 self.server.analysis_queue.put((payload["project_id"], payload["collection_id"], revision))
+        except ValueError as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
         except sqlite3.Error:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "Could not save submission"})
             return

@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from app.calendar.google_calendar import (
@@ -40,19 +40,22 @@ def submission_endpoint(coordinator_url: str) -> str:
 
 def post_submission(
     payload: dict[str, Any], *, coordinator_url: str, secret: str,
-    ca_cert: str | Path | None = None,
+    ca_cert: str | Path | None = None, refresh_revision: int | None = None,
 ) -> dict[str, Any]:
     """Send prepared event JSON, keeping Google OAuth tokens on this computer."""
     if not secret:
         raise ValueError("upload secret must not be empty")
     endpoint = submission_endpoint(coordinator_url)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {secret}",
+    }
+    if refresh_revision is not None:
+        headers["X-Refresh-Revision"] = str(refresh_revision)
     request = Request(
         endpoint,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {secret}",
-        },
+        headers=headers,
         method="POST",
     )
     if endpoint.startswith("https://"):
@@ -69,6 +72,31 @@ def post_submission(
             or receipt.get("event_count") != len(payload["events"])):
         raise ValueError("coordinator did not confirm the upload")
     return receipt
+
+
+def wait_for_refresh(sync: CalendarSnapshotSync, *, after: int) -> int:
+    """Wait for a coordinator request using the member's existing HTTPS credentials."""
+    endpoint = submission_endpoint(sync.coordinator_url).removesuffix("/submissions")
+    query = urlencode({
+        "project_id": sync.project_id, "collection_id": sync.collection_id,
+        "member_id": sync.member_id, "after": after,
+    })
+    request = Request(
+        f"{endpoint}/refresh-requests?{query}",
+        headers={"Authorization": f"Bearer {sync.secret}"},
+        method="GET",
+    )
+    if endpoint.startswith("https://"):
+        context = ssl.create_default_context(cafile=str(sync.ca_cert) if sync.ca_cert else None)
+        response = urlopen(request, context=context, timeout=30)
+    else:
+        response = urlopen(request, timeout=30)
+    with response:
+        data = json.load(response)
+    revision = data.get("revision") if isinstance(data, dict) else None
+    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+        raise ValueError("coordinator returned an invalid refresh revision")
+    return revision
 
 
 class CalendarSnapshotSync:
@@ -105,7 +133,7 @@ class CalendarSnapshotSync:
         )
         self._last_uploaded_hash: bytes | None = None
 
-    def sync_once(self) -> dict[str, Any] | None:
+    def sync_once(self, *, refresh_revision: int | None = None) -> dict[str, Any] | None:
         """Upload on first check or after an add, edit, or deletion."""
         now = datetime.now(timezone.utc)
         events = fetch_events(
@@ -121,7 +149,7 @@ class CalendarSnapshotSync:
             ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         ).encode("utf-8")
         snapshot_hash = hashlib.sha256(canonical).digest()
-        if snapshot_hash == self._last_uploaded_hash:
+        if refresh_revision is None and snapshot_hash == self._last_uploaded_hash:
             return None
 
         payload = {
@@ -132,7 +160,7 @@ class CalendarSnapshotSync:
         }
         receipt = post_submission(
             payload, coordinator_url=self.coordinator_url,
-            secret=self.secret, ca_cert=self.ca_cert,
+            secret=self.secret, ca_cert=self.ca_cert, refresh_revision=refresh_revision,
         )
         self._last_uploaded_hash = snapshot_hash
         return receipt
@@ -184,6 +212,44 @@ def watch_calendar(
         stop_event.wait(max(30, delay * random.uniform(0.75, 1.25)))
 
 
+def on_demand_calendar(
+    sync: CalendarSnapshotSync, *, stop_event: threading.Event | None = None,
+) -> None:
+    """Upload initially, then refresh only when the coordinator requests it."""
+    stop_event = stop_event or threading.Event()
+    initial_uploaded = False
+    acknowledged = 0
+    pending: int | None = None
+    failures = 0
+    while not stop_event.is_set():
+        try:
+            if not initial_uploaded:
+                receipt = sync.sync_once()
+                initial_uploaded = True
+            else:
+                if pending is None:
+                    revision = wait_for_refresh(sync, after=acknowledged)
+                    if revision <= acknowledged:
+                        continue
+                    pending = revision
+                receipt = sync.sync_once(refresh_revision=pending)
+                acknowledged = pending
+                pending = None
+            if receipt is not None:
+                print(f"Synced {receipt['event_count']} events for {receipt['member_id']}.", flush=True)
+            failures = 0
+        except HTTPError as exc:
+            if exc.code == 401:
+                raise RuntimeError("Coordinator rejected the member secret; stop and check it") from exc
+            failures += 1
+            print(f"Sync failed (HTTP {exc.code}); will retry.", file=sys.stderr, flush=True)
+        except Exception as exc:
+            failures += 1
+            print(f"Sync failed: {exc}; will retry.", file=sys.stderr, flush=True)
+        if failures:
+            stop_event.wait(min(5 * 2 ** min(failures - 1, 4), 60))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Send your Calendar events to the coordinator")
     parser.add_argument("--project-id", required=True)
@@ -194,7 +260,9 @@ def main() -> None:
     parser.add_argument("--credentials", type=Path, default=Path("credentials.json"))
     parser.add_argument("--calendar-id", default="primary")
     parser.add_argument("--days-ahead", type=int, default=14)
-    parser.add_argument("--watch", action="store_true", help="Keep syncing while this command runs")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--watch", action="store_true", help="Keep syncing while this command runs")
+    mode.add_argument("--on-demand", action="store_true", help="Sync when the coordinator requests a refresh")
     parser.add_argument("--interval-seconds", type=int, default=60, help="Watch interval (minimum 30 seconds)")
     args = parser.parse_args()
     if args.watch and args.interval_seconds < 30:
@@ -212,6 +280,10 @@ def main() -> None:
         if args.watch:
             print("Watching Calendar for changes. Press Ctrl+C to stop.", flush=True)
             watch_calendar(sync, interval_seconds=args.interval_seconds)
+            return
+        if args.on_demand:
+            print("Waiting for coordinator refresh requests. Press Ctrl+C to stop.", flush=True)
+            on_demand_calendar(sync)
             return
         receipt = sync.sync_once()
         if receipt is None:

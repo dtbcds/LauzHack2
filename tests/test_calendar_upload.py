@@ -8,8 +8,10 @@ from urllib.error import HTTPError
 
 from app.calendar.send_to_coordinator import (
     CalendarSnapshotSync,
+    on_demand_calendar,
     send_calendar_snapshot,
     submission_endpoint,
+    wait_for_refresh,
     watch_calendar,
 )
 from app.coordinator.server import CoordinatorServer
@@ -134,6 +136,39 @@ class CalendarUploadTests(unittest.TestCase):
         self.assertEqual(fetch_events.call_count, 3)
         self.assertEqual(self.server.store.get_analysis("demo", "round-1")["revision"], 2)
         self.assertEqual(self.server.store.list_for_collection("demo", "round-1")[0]["events"], [])
+
+    @patch("app.calendar.send_to_coordinator.fetch_events", return_value=[])
+    def test_on_demand_refresh_acknowledges_unchanged_calendar(self, fetch_events):
+        sync = CalendarSnapshotSync(
+            project_id="demo", collection_id="round-1", member_id="dany",
+            coordinator_url=self.url, secret=self.secret, service=object(),
+        )
+        revision = self.server.store.request_refresh("demo", "round-1")
+
+        class UntilReceived:
+            def is_set(inner_self):
+                return (self.server.store.get_refresh_status("demo", "round-1")
+                        ["members"]["dany"] == "received")
+
+            def wait(inner_self, _seconds):
+                pass
+
+        on_demand_calendar(sync, stop_event=UntilReceived())
+
+        self.assertEqual(fetch_events.call_count, 2)
+        self.assertEqual(self.server.store.get_refresh_revision("demo", "round-1"), revision)
+        self.assertEqual(self.server.store.get_refresh_status("demo", "round-1")["members"],
+                         {"dany": "received"})
+        self.assertEqual(self.server.store.get_analysis("demo", "round-1")["revision"], 2)
+
+    def test_refresh_poll_rejects_wrong_secret(self):
+        sync = CalendarSnapshotSync(
+            project_id="demo", collection_id="round-1", member_id="dany",
+            coordinator_url=self.url, secret="wrong-secret", service=object(),
+        )
+        with self.assertRaises(HTTPError) as raised:
+            wait_for_refresh(sync, after=0)
+        self.assertEqual(raised.exception.code, 401)
 
 
 if __name__ == "__main__":

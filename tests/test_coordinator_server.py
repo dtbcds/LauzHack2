@@ -9,6 +9,7 @@ import time
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.calendar.google_calendar import prepare_event
@@ -132,6 +133,52 @@ class CoordinatorServerTests(unittest.TestCase):
     def test_health_route(self):
         with urlopen(self.base_url + "/health", timeout=2) as response:
             self.assertEqual(json.load(response), {"status": "ok"})
+
+    def test_refresh_progress_requires_acknowledged_upload(self):
+        self.server.store.register_member("demo", "hatem")
+        revision = self.server.store.request_refresh("demo", "round-1")
+        status = self.server.store.get_refresh_status("demo", "round-1")
+        self.assertEqual(status["revision"], revision)
+        self.assertEqual(status["members"], {"dany": "waiting", "hatem": "waiting"})
+        payload = {"project_id": "demo", "collection_id": "round-1", "member_id": "dany", "events": []}
+        with self.post(payload):
+            pass
+        self.assertEqual(self.server.store.get_refresh_status("demo", "round-1")["members"]["dany"],
+                         "waiting")
+        request = Request(
+            self.base_url + "/submissions", data=json.dumps(payload).encode(), method="POST",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.secret}",
+                     "X-Refresh-Revision": str(revision)},
+        )
+        with urlopen(request, timeout=2):
+            pass
+        self.assertEqual(self.server.store.get_refresh_status("demo", "round-1")["members"],
+                         {"dany": "received", "hatem": "waiting"})
+        self.server.store.request_refresh("demo", "round-1")
+        self.assertEqual(self.server.store.get_refresh_status("demo", "round-1")["members"],
+                         {"dany": "waiting", "hatem": "waiting"})
+
+    def test_refresh_poll_wakes_for_local_request(self):
+        query = urlencode({"project_id": "demo", "collection_id": "round-1",
+                           "member_id": "dany", "after": 0})
+        request = Request(self.base_url + "/refresh-requests?" + query,
+                          headers={"Authorization": f"Bearer {self.secret}"})
+        result = []
+
+        def poll():
+            with urlopen(request, timeout=3) as response:
+                result.append(json.load(response))
+
+        thread = threading.Thread(target=poll)
+        thread.start()
+        try:
+            time.sleep(0.1)
+            self.assertEqual(self.server.store.request_refresh("demo", "round-1"), 1)
+            thread.join(timeout=3)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(result, [{"revision": 1}])
+        finally:
+            thread.join(timeout=3)
 
     def test_second_server_reports_port_in_use_without_cleanup_error(self):
         with self.assertRaises(OSError) as raised:

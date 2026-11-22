@@ -62,6 +62,25 @@ class SubmissionStore:
                 )
             """)
             database.execute("""
+                CREATE TABLE IF NOT EXISTS refresh_requests (
+                    project_id TEXT NOT NULL,
+                    collection_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    requested_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, collection_id)
+                )
+            """)
+            database.execute("""
+                CREATE TABLE IF NOT EXISTS refresh_acks (
+                    project_id TEXT NOT NULL,
+                    collection_id TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    received_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, collection_id, member_id)
+                )
+            """)
+            database.execute("""
                 INSERT OR IGNORE INTO analyses
                     (project_id, collection_id, revision, status, updated_at)
                 SELECT project_id, collection_id, 1, 'pending', ?
@@ -80,10 +99,17 @@ class SubmissionStore:
         finally:
             database.close()
 
-    def save(self, payload: dict[str, Any]) -> int:
+    def save(self, payload: dict[str, Any], *, refresh_revision: int | None = None) -> int:
         """Persist a member snapshot and mark its collection for full analysis."""
         received_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as database:
+            if refresh_revision is not None:
+                current = database.execute("""
+                    SELECT revision FROM refresh_requests
+                    WHERE project_id = ? AND collection_id = ?
+                """, (payload["project_id"], payload["collection_id"])).fetchone()
+                if current is None or refresh_revision < 1 or refresh_revision > current[0]:
+                    raise ValueError("Unknown refresh revision")
             database.execute("""
                 INSERT INTO submissions
                     (project_id, collection_id, member_id, received_at, payload_json)
@@ -108,7 +134,69 @@ class SubmissionStore:
             revision = database.execute("""
                 SELECT revision FROM analyses WHERE project_id = ? AND collection_id = ?
             """, (payload["project_id"], payload["collection_id"])).fetchone()[0]
+            if refresh_revision is not None:
+                database.execute("""
+                    INSERT INTO refresh_acks
+                        (project_id, collection_id, member_id, revision, received_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(project_id, collection_id, member_id) DO UPDATE SET
+                        revision = MAX(revision, excluded.revision),
+                        received_at = excluded.received_at
+                """, (
+                    payload["project_id"], payload["collection_id"], payload["member_id"],
+                    refresh_revision, received_at,
+                ))
         return revision
+
+    def request_refresh(self, project_id: str, collection_id: str) -> int:
+        """Request a new snapshot from each member running the on-demand client."""
+        if not project_id.strip() or not collection_id.strip():
+            raise ValueError("project_id and collection_id must be non-empty")
+        with self._connect() as database:
+            database.execute("""
+                INSERT INTO refresh_requests (project_id, collection_id, revision, requested_at)
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(project_id, collection_id) DO UPDATE SET
+                    revision = revision + 1,
+                    requested_at = excluded.requested_at
+            """, (project_id, collection_id, datetime.now(timezone.utc).isoformat()))
+            return database.execute("""
+                SELECT revision FROM refresh_requests
+                WHERE project_id = ? AND collection_id = ?
+            """, (project_id, collection_id)).fetchone()[0]
+
+    def get_refresh_revision(self, project_id: str, collection_id: str) -> int:
+        with self._connect() as database:
+            row = database.execute("""
+                SELECT revision FROM refresh_requests
+                WHERE project_id = ? AND collection_id = ?
+            """, (project_id, collection_id)).fetchone()
+        return row[0] if row else 0
+
+    def get_refresh_status(self, project_id: str, collection_id: str) -> dict[str, Any]:
+        """Show which registered members acknowledged the latest refresh."""
+        with self._connect() as database:
+            request = database.execute("""
+                SELECT revision, requested_at FROM refresh_requests
+                WHERE project_id = ? AND collection_id = ?
+            """, (project_id, collection_id)).fetchone()
+            rows = database.execute("""
+                SELECT member_secrets.member_id, refresh_acks.revision
+                FROM member_secrets LEFT JOIN refresh_acks
+                  ON refresh_acks.project_id = member_secrets.project_id
+                 AND refresh_acks.collection_id = ?
+                 AND refresh_acks.member_id = member_secrets.member_id
+                WHERE member_secrets.project_id = ? ORDER BY member_secrets.member_id
+            """, (collection_id, project_id)).fetchall()
+        revision, requested_at = request if request else (0, None)
+        return {
+            "project_id": project_id,
+            "collection_id": collection_id,
+            "revision": revision,
+            "requested_at": requested_at,
+            "members": {member_id: "received" if revision and ack == revision else "waiting"
+                        for member_id, ack in rows},
+        }
 
     def pending_analyses(self) -> list[tuple[str, str, int]]:
         """Return jobs to retry after a restart, including failed runs."""
