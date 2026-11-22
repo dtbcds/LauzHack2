@@ -49,6 +49,43 @@ class SubmissionStore:
                     PRIMARY KEY (project_id, member_id)
                 )
             """)
+            database.execute("""
+                CREATE TABLE IF NOT EXISTS analyses (
+                    project_id TEXT NOT NULL,
+                    collection_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT,
+                    error TEXT,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, collection_id)
+                )
+            """)
+            database.execute("""
+                CREATE TABLE IF NOT EXISTS refresh_requests (
+                    project_id TEXT NOT NULL,
+                    collection_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    requested_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, collection_id)
+                )
+            """)
+            database.execute("""
+                CREATE TABLE IF NOT EXISTS refresh_acks (
+                    project_id TEXT NOT NULL,
+                    collection_id TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    received_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, collection_id, member_id)
+                )
+            """)
+            database.execute("""
+                INSERT OR IGNORE INTO analyses
+                    (project_id, collection_id, revision, status, updated_at)
+                SELECT project_id, collection_id, 1, 'pending', ?
+                FROM submissions GROUP BY project_id, collection_id
+            """, (datetime.now(timezone.utc).isoformat(),))
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -62,10 +99,17 @@ class SubmissionStore:
         finally:
             database.close()
 
-    def save(self, payload: dict[str, Any]) -> None:
-        """Persist one member's full snapshot; retrying replaces the old one."""
+    def save(self, payload: dict[str, Any], *, refresh_revision: int | None = None) -> int:
+        """Persist a member snapshot and mark its collection for full analysis."""
         received_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as database:
+            if refresh_revision is not None:
+                current = database.execute("""
+                    SELECT revision FROM refresh_requests
+                    WHERE project_id = ? AND collection_id = ?
+                """, (payload["project_id"], payload["collection_id"])).fetchone()
+                if current is None or refresh_revision < 1 or refresh_revision > current[0]:
+                    raise ValueError("Unknown refresh revision")
             database.execute("""
                 INSERT INTO submissions
                     (project_id, collection_id, member_id, received_at, payload_json)
@@ -77,6 +121,139 @@ class SubmissionStore:
                 payload["project_id"], payload["collection_id"], payload["member_id"],
                 received_at, json.dumps(payload, ensure_ascii=False),
             ))
+            database.execute("""
+                INSERT INTO analyses
+                    (project_id, collection_id, revision, status, updated_at)
+                VALUES (?, ?, 1, 'pending', ?)
+                ON CONFLICT(project_id, collection_id) DO UPDATE SET
+                    revision = revision + 1,
+                    status = 'pending',
+                    error = NULL,
+                    updated_at = excluded.updated_at
+            """, (payload["project_id"], payload["collection_id"], received_at))
+            revision = database.execute("""
+                SELECT revision FROM analyses WHERE project_id = ? AND collection_id = ?
+            """, (payload["project_id"], payload["collection_id"])).fetchone()[0]
+            if refresh_revision is not None:
+                database.execute("""
+                    INSERT INTO refresh_acks
+                        (project_id, collection_id, member_id, revision, received_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(project_id, collection_id, member_id) DO UPDATE SET
+                        revision = MAX(revision, excluded.revision),
+                        received_at = excluded.received_at
+                """, (
+                    payload["project_id"], payload["collection_id"], payload["member_id"],
+                    refresh_revision, received_at,
+                ))
+        return revision
+
+    def request_refresh(self, project_id: str, collection_id: str) -> int:
+        """Request a new snapshot from each member running the on-demand client."""
+        if not project_id.strip() or not collection_id.strip():
+            raise ValueError("project_id and collection_id must be non-empty")
+        with self._connect() as database:
+            database.execute("""
+                INSERT INTO refresh_requests (project_id, collection_id, revision, requested_at)
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(project_id, collection_id) DO UPDATE SET
+                    revision = revision + 1,
+                    requested_at = excluded.requested_at
+            """, (project_id, collection_id, datetime.now(timezone.utc).isoformat()))
+            return database.execute("""
+                SELECT revision FROM refresh_requests
+                WHERE project_id = ? AND collection_id = ?
+            """, (project_id, collection_id)).fetchone()[0]
+
+    def get_refresh_revision(self, project_id: str, collection_id: str) -> int:
+        with self._connect() as database:
+            row = database.execute("""
+                SELECT revision FROM refresh_requests
+                WHERE project_id = ? AND collection_id = ?
+            """, (project_id, collection_id)).fetchone()
+        return row[0] if row else 0
+
+    def get_refresh_status(self, project_id: str, collection_id: str) -> dict[str, Any]:
+        """Show which registered members acknowledged the latest refresh."""
+        with self._connect() as database:
+            request = database.execute("""
+                SELECT revision, requested_at FROM refresh_requests
+                WHERE project_id = ? AND collection_id = ?
+            """, (project_id, collection_id)).fetchone()
+            rows = database.execute("""
+                SELECT member_secrets.member_id, refresh_acks.revision
+                FROM member_secrets LEFT JOIN refresh_acks
+                  ON refresh_acks.project_id = member_secrets.project_id
+                 AND refresh_acks.collection_id = ?
+                 AND refresh_acks.member_id = member_secrets.member_id
+                WHERE member_secrets.project_id = ? ORDER BY member_secrets.member_id
+            """, (collection_id, project_id)).fetchall()
+        revision, requested_at = request if request else (0, None)
+        return {
+            "project_id": project_id,
+            "collection_id": collection_id,
+            "revision": revision,
+            "requested_at": requested_at,
+            "members": {member_id: "received" if revision and ack == revision else "waiting"
+                        for member_id, ack in rows},
+        }
+
+    def pending_analyses(self) -> list[tuple[str, str, int]]:
+        """Return jobs to retry after a restart, including failed runs."""
+        with self._connect() as database:
+            rows = database.execute("""
+                SELECT project_id, collection_id, revision FROM analyses
+                WHERE status IN ('pending', 'processing', 'failed')
+            """).fetchall()
+        return [(project_id, collection_id, revision) for project_id, collection_id, revision in rows]
+
+    def mark_analysis_processing(self, project_id: str, collection_id: str, revision: int) -> bool:
+        with self._connect() as database:
+            changed = database.execute("""
+                UPDATE analyses SET status = 'processing', updated_at = ?
+                WHERE project_id = ? AND collection_id = ? AND revision = ?
+                  AND status IN ('pending', 'processing', 'failed')
+            """, (datetime.now(timezone.utc).isoformat(), project_id, collection_id, revision))
+        return changed.rowcount == 1
+
+    def finish_analysis(
+        self, project_id: str, collection_id: str, revision: int,
+        *, result: dict[str, Any] | None = None, error: str | None = None,
+    ) -> bool:
+        """Save a result only if no newer submission superseded this run."""
+        if (result is None) == (error is None):
+            raise ValueError("Provide exactly one of result or error")
+        with self._connect() as database:
+            changed = database.execute("""
+                UPDATE analyses SET status = ?, result_json = COALESCE(?, result_json),
+                    error = ?, updated_at = ?
+                WHERE project_id = ? AND collection_id = ? AND revision = ?
+            """, (
+                "ready" if error is None else "failed",
+                json.dumps(result, ensure_ascii=False) if result is not None else None,
+                error, datetime.now(timezone.utc).isoformat(),
+                project_id, collection_id, revision,
+            ))
+        return changed.rowcount == 1
+
+    def get_analysis(self, project_id: str, collection_id: str) -> dict[str, Any] | None:
+        with self._connect() as database:
+            row = database.execute("""
+                SELECT revision, status, result_json, error, updated_at FROM analyses
+                WHERE project_id = ? AND collection_id = ?
+            """, (project_id, collection_id)).fetchone()
+        if row is None:
+            return None
+        revision, status, result_json, error, updated_at = row
+        return {
+            "project_id": project_id,
+            "collection_id": collection_id,
+            "revision": revision,
+            "status": status,
+            "result": json.loads(result_json) if result_json else None,
+            "error": error,
+            "updated_at": updated_at,
+        }
 
     def register_member(self, project_id: str, member_id: str) -> str:
         """Create or rotate one member's upload secret; return it only once."""
