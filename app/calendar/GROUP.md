@@ -37,7 +37,8 @@ python src/main.py --mode group --member-id dany --coordinator-url https://YOUR_
 ```
 
 Hatem runs the same command with `--member-id hatem`. Each enters their own existing
-member secret in the terminal. It stays in memory. Google authorization stays on
+member secret in the terminal before the app window opens. Typing is hidden;
+paste it and press Enter. It stays in memory. Google authorization stays on
 that member's computer. The certificate must match the coordinator's current IP.
 
 ## Updating and analysis

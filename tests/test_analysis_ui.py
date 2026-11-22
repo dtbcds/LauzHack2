@@ -117,3 +117,49 @@ def test_coordinator_can_be_excluded_from_refresh_without_losing_access(tmp_path
     assert restarted.is_authorized('team', 'nil', secret)
     restarted.set_refresh_enabled('team', 'nil', True)
     assert set(restarted.get_refresh_status('team', 'round-1')['members']) == {'nil', 'dany'}
+
+
+def test_group_secret_is_requested_before_window_opens(monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('relay_startup', Path(__file__).parents[1] / 'src/main.py')
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+    order = []
+    monkeypatch.setattr(ui, 'configure_desktop_client', lambda: order.append('configured'))
+    monkeypatch.setattr(ui.getpass, 'getpass', lambda prompt: order.append('secret') or 'test-secret')
+    monkeypatch.setattr(ui, 'main', lambda page, *, group_secret: order.append(('mounted', group_secret)))
+    def run(callback):
+        order.append('window')
+        callback(object())
+    monkeypatch.setattr(ui.ft, 'run', run)
+    ui.launch(['--mode', 'group', '--member-id', 'hatem', '--coordinator-url', 'https://127.0.0.1:8000'])
+    assert order == ['configured', 'secret', 'window', ('mounted', 'test-secret')]
+
+
+def test_group_page_mounts_without_terminal_input(tmp_path, monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('relay_group_page', Path(__file__).parents[1] / 'src/main.py')
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+    monkeypatch.setattr(ui, 'ROOT', tmp_path)
+    monkeypatch.setenv('RELAY_MODE', 'group')
+    monkeypatch.setenv('RELAY_MEMBER_ID', 'hatem')
+    monkeypatch.setenv('RELAY_COORDINATOR_URL', 'https://127.0.0.1:8000')
+    def unexpected_prompt(prompt):
+        raise AssertionError('Page startup must not wait for terminal input')
+    monkeypatch.setattr(ui.getpass, 'getpass', unexpected_prompt)
+    class Page:
+        class Window:
+            pass
+        window = Window()
+        controls = []
+        jobs = []
+        def add(self, control):
+            self.controls.append(control)
+        def run_task(self, callback):
+            self.jobs.append(callback)
+    page = Page()
+    ui.main(page, group_secret='test-secret')
+    assert len(page.controls) == 1
+    assert len(page.jobs) == 3
+    assert 'Group (hatem)' in page.title

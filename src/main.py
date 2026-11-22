@@ -22,7 +22,7 @@ from workspace import mount_workspace
 from native_motion import configure_desktop_client
 
 
-def main(page: ft.Page) -> None:
+def main(page: ft.Page, *, group_secret: str | None = None) -> None:
     page.title = "Relay"
     page.window.icon = str(Path(__file__).resolve().parents[1] / "assets/relay.ico")
     page.theme_mode = ft.ThemeMode.DARK
@@ -54,7 +54,7 @@ def main(page: ft.Page) -> None:
         connection = GroupConnection(
             project, collection, member,
             url=os.environ.get("RELAY_COORDINATOR_URL"),
-            secret=getpass.getpass("Your member upload secret: ") if host_store is None else None,
+            secret=group_secret if host_store is None else None,
             ca_cert=os.environ.get("RELAY_CA_CERT", str(ROOT / "data/coordinator.crt")) if host_store is None else None,
             host_store=host_store,
         )
@@ -177,7 +177,7 @@ def main(page: ft.Page) -> None:
         page.run_task(refresh_calendars)
 
 
-if __name__ == "__main__":
+def launch(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run Relay")
     parser.add_argument("--mode", choices=["coordinator", "personal", "group", "group-host"])
     parser.add_argument("--member-id")
@@ -186,9 +186,36 @@ if __name__ == "__main__":
     parser.add_argument("--project-id")
     parser.add_argument("--collection-id")
     parser.add_argument("--database")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     for key, value in vars(args).items():
         if value is not None:
             os.environ["RELAY_" + key.upper()] = value
+    mode = os.environ.get("RELAY_MODE", "coordinator")
+    if mode in ("personal", "group", "group-host") and not os.environ.get("RELAY_MEMBER_ID", "").strip():
+        parser.error("--member-id is required for this mode")
+    if mode == "group" and not os.environ.get("RELAY_COORDINATOR_URL"):
+        parser.error("--coordinator-url is required for group mode")
     configure_desktop_client()
-    ft.run(main)
+    # Complete terminal input before Flet opens a window and mounts the page.
+    secret = None
+    if mode == "group":
+        print("Enter your existing member secret below. Typing is hidden; press Enter when done.", flush=True)
+        try:
+            secret = getpass.getpass("Your member upload secret: ")
+        except (EOFError, KeyboardInterrupt):
+            parser.exit(1, "\nGroup startup cancelled. Run from an interactive terminal.\n")
+        if not secret:
+            parser.error("The member secret must not be empty")
+
+    def start_page(page: ft.Page) -> None:
+        try:
+            main(page, group_secret=secret)
+        except Exception as error:
+            print(f"Relay startup failed: {error}", file=sys.stderr, flush=True)
+            page.add(ft.Text(f"Relay could not start: {error}", selectable=True))
+
+    ft.run(start_page)
+
+
+if __name__ == "__main__":
+    launch()
