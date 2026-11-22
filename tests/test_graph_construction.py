@@ -564,3 +564,14 @@ def test_ui_data_handles_empty_graph():
         "edges": [],
         "bottleneck_ids": [],
     }
+
+
+def test_unknown_calendar_status_can_be_a_potential_bottleneck():
+    tasks = [task('A'), task('B'), task('C')]
+    for item, owner in zip(tasks, ['nil', 'dany', 'hatem']):
+        item.update(status=None, owner=owner)
+    graph = build_graph(tasks, [dependency('A', 'B'), dependency('B', 'C')])
+    result = detect_bottlenecks(graph, calculate_priority(graph))
+    assert [item['task_id'] for item in result] == ['A']
+    assert 'completion status is unknown' in result[0]['reason']
+    assert graph.nodes['A']['status'] is None

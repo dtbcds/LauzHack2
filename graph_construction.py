@@ -223,7 +223,8 @@ def detect_bottlenecks(graph, scores):
     bottlenecks = []
     for task_id, attributes in graph.nodes(data=True):
         status = attributes.get("status")
-        if not isinstance(status, str) or status.strip().lower() != "pending":
+        normalized = status.strip().lower() if isinstance(status, str) else "unknown"
+        if normalized not in {"pending", "unknown", "", "open", "needsaction", "in_progress"}:
             continue
 
         downstream_count = impacts[task_id]["downstream_count"]
@@ -237,6 +238,8 @@ def detect_bottlenecks(graph, scores):
         critical_path_impact = task_scores.get("critical_path_component", 0.0)
         owner = attributes.get("owner")
         reason = f"Blocks {blocked_count} tasks and affects {affected_people} coworkers."
+        if normalized in {"unknown", ""}:
+            reason = "Potential bottleneck; completion status is unknown. " + reason
         bottlenecks.append(
             {
                 "task_id": task_id,

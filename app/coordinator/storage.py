@@ -221,6 +221,15 @@ class SubmissionStore:
             """).fetchall()
         return [(project_id, collection_id, revision) for project_id, collection_id, revision in rows]
 
+    def reset_analysis(self, project_id: str, collection_id: str, revision: int) -> bool:
+        """Recompute an existing snapshot after changing the inference engine."""
+        with self._connect() as database:
+            changed = database.execute("""
+                UPDATE analyses SET status = 'pending', result_json = NULL, error = NULL
+                WHERE project_id = ? AND collection_id = ? AND revision = ?
+            """, (project_id, collection_id, revision))
+        return changed.rowcount == 1
+
     def mark_analysis_processing(self, project_id: str, collection_id: str, revision: int) -> bool:
         with self._connect() as database:
             changed = database.execute("""

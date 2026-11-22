@@ -254,7 +254,7 @@ def main() -> None:
     parser.add_argument("--database", type=Path, default=Path("data/coordinator.sqlite3"))
     parser.add_argument("--certfile", type=Path, help="TLS certificate (required for remote access)")
     parser.add_argument("--keyfile", type=Path, help="TLS private key (required for remote access)")
-    parser.add_argument("--no-analysis", action="store_true", help="Save uploads without running Ollama")
+    parser.add_argument("--no-analysis", action="store_true", help="Save uploads without calling the OpenAI API")
     args = parser.parse_args()
     if bool(args.certfile) != bool(args.keyfile):
         parser.error("--certfile and --keyfile must be provided together")

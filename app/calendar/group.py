@@ -127,8 +127,15 @@ class GroupCalendar:
 
     def analyze_pending(self):
         state = self.store.get_analysis(self.project_id, self.collection_id)
-        if state is None or state['revision'] == self._attempted or state['status'] == 'ready':
+        if state is None or state['revision'] == self._attempted:
             return
+        if state['status'] == 'ready':
+            if self.analyzer is not analyze_submissions:
+                return
+            from dependency_extraction import cache_namespace
+            if (state.get('result') or {}).get('analysis_engine') == cache_namespace():
+                return
+            self.store.reset_analysis(self.project_id, self.collection_id, state['revision'])
         revision = state['revision']
         self._attempted = revision
         if not self.store.mark_analysis_processing(self.project_id, self.collection_id, revision):

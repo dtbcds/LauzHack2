@@ -159,3 +159,26 @@ def test_calendar_upload_only_at_startup_or_coordinator_request(coordinator, tmp
         assert group.connection.snapshot()['refresh_revision'] == revision
         group.poll()
         assert fetch.call_count == 2
+
+
+def test_old_qwen_result_is_recomputed_when_group_uses_openai(tmp_path, monkeypatch):
+    from app.coordinator.storage import SubmissionStore
+    import dependency_extraction
+    source = SubmissionStore(tmp_path / 'source.sqlite3')
+    group = GroupCalendar(GroupConnection('demo', 'round-1', 'nil', host_store=source), tmp_path / 'cache.sqlite3')
+    submissions = [{'project_id': 'demo', 'collection_id': 'round-1', 'member_id': 'nil',
+                    'events': [{'id': 'a', 'summary': 'Report'}, {'id': 'b', 'summary': 'Presentation'}]}]
+    revision = group.store.replace_collection('demo', 'round-1', submissions)
+    group.store.finish_analysis('demo', 'round-1', revision, result={'nodes': [], 'edges': []})
+    calls = []
+    monkeypatch.setattr(dependency_extraction, 'extract_group_dependencies',
+                        lambda tasks: calls.append(tasks) or {'dependencies': []})
+    from app.coordinator.analysis import _dependency_cache
+    _dependency_cache.clear()
+    group.analyze_pending()
+    assert len(calls) == 1
+    assert group.view()['status'] == 'ready'
+    assert group.view()['result']['analysis_engine'] == dependency_extraction.cache_namespace()
+    group.analyze_pending()
+    assert len(calls) == 1
+    _dependency_cache.clear()
