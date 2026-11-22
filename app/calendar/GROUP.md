@@ -42,9 +42,11 @@ that member's computer. The certificate must match the coordinator's current IP.
 
 ## Updating and analysis
 
-The apps check the combined snapshot every 3 seconds and check their own Google
-Calendar every 30 seconds. Refresh on any group UI requests a new upload from
-members; running group UIs respond on their next check. Nil's host UI fetches and
+The apps check the coordinator for requests and downloaded group changes every
+3 seconds. They fetch/upload their own Google Calendar once on startup, then only
+when the coordinator has a new refresh request. No periodic Google Calendar fetch
+runs between requests. Refresh on any group UI asks the coordinator to request
+new uploads from members; running group UIs respond on their next check. Nil's host UI fetches and
 adds Nil's own events too. Changes, including edits and deletions, replace the
 previous member snapshot. Offline members' last uploads remain visible until they
 reconnect. A group snapshot can include older data from an offline member.
@@ -61,3 +63,12 @@ look at the sync status for an incorrect secret, address, or certificate.
 
 Scope remains the primary Calendar's next 14 days, including linked Google Tasks
 notes. Standalone Tasks without fetched Calendar entries are not included.
+
+## Checking a missing member
+
+The window title shows Group, Group host, or Personal and the member ID. Personal
+mode only displays that person's Calendar. In group mode the sync status names
+the downloaded members and shows who is still waiting for the current refresh.
+The terminal prints each changed download and successful upload, including the
+refresh number. If all three names are downloaded but the list shows only one
+owner, set the Owner filter to All owners and clear search/threshold filters.

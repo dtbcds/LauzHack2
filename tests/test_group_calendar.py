@@ -132,3 +132,30 @@ def test_local_failure_keeps_group_items_and_no_automatic_model_retry(tmp_path):
     group.refresh()
     group.analyze_pending()
     assert len(calls) == 2
+
+
+def test_calendar_upload_only_at_startup_or_coordinator_request(coordinator, tmp_path):
+    server, url = coordinator
+    secret = server.store.register_member('demo', 'hatem')
+    group = GroupCalendar(GroupConnection('demo', 'round-1', 'hatem', url=url, secret=secret),
+                          tmp_path / 'hatem.sqlite3')
+    with patch('app.calendar.send_to_coordinator.connect_calendar', return_value=object()), \
+         patch('app.calendar.send_to_coordinator.fetch_events', return_value=[{'id': 'a', 'summary': 'Before'}]) as fetch:
+        group.poll()
+        assert fetch.call_count == 1
+        fetch.return_value = [{'id': 'a', 'summary': 'Edited on Google'}]
+        for _ in range(5):
+            group.poll()
+        assert fetch.call_count == 1
+        saved = server.store.list_for_collection('demo', 'round-1')[0]
+        assert saved['events'][0]['summary'] == 'Before'
+        # Nil requests refresh on the coordinator; Hatem responds on his next poll.
+        revision = server.store.request_refresh('demo', 'round-1')
+        group.poll()
+        assert fetch.call_count == 2
+        saved = server.store.list_for_collection('demo', 'round-1')[0]
+        assert saved['events'][0]['summary'] == 'Edited on Google'
+        assert server.store.get_refresh_status('demo', 'round-1')['members']['hatem'] == 'received'
+        assert group.connection.snapshot()['refresh_revision'] == revision
+        group.poll()
+        assert fetch.call_count == 2

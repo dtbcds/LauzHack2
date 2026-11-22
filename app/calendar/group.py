@@ -2,7 +2,6 @@
 
 import json
 import ssl
-import time
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -60,7 +59,7 @@ class GroupCalendar:
         self.credentials = credentials
         self.analyzer = analyzer
         self.sync = None
-        self._last_upload = 0
+        self._uploaded = False
         self._acked = 0
         self._attempted = None
         self._force = False
@@ -79,6 +78,7 @@ class GroupCalendar:
         self._force = True
         self._attempted = None
         self.message = 'Group refresh requested.'
+        print(f"Requested coordinator refresh for {self.project_id}/{self.collection_id}.", flush=True)
 
     def _receive(self, snapshot):
         submissions = snapshot['submissions']
@@ -87,14 +87,21 @@ class GroupCalendar:
                 or self.store.get_analysis(self.project_id, self.collection_id) is None):
             self.store.replace_collection(self.project_id, self.collection_id, submissions)
             self._fingerprint = fingerprint
+            details = ', '.join(f"{item['member_id']}={len(item['events'])}" for item in submissions)
+            print(f"Downloaded group {self.project_id}/{self.collection_id}: {details or 'no uploads yet'}.", flush=True)
         count = sum(len(item['events']) for item in submissions)
-        self.message = f'Group synced: {len(submissions)} members, {count} Calendar items.'
+        names = ', '.join(item['member_id'] for item in submissions)
+        self.message = f'Group synced: {len(submissions)} members ({names or "none"}), {count} Calendar items.'
+        progress = snapshot.get('refresh_status')
+        if progress and progress['revision']:
+            waiting = [member for member, status in progress['members'].items() if status != 'received']
+            self.message += (' Waiting for: ' + ', '.join(waiting) + '.') if waiting else ' Refresh received.'
 
     def poll(self):
         snapshot = self.connection.snapshot()
         self._receive(snapshot)
         revision = snapshot['refresh_revision']
-        if self._force or revision > self._acked or time.monotonic() - self._last_upload >= 30:
+        if not self._uploaded or self._force or revision > self._acked:
             if self.sync is None:
                 self.sync = CalendarSnapshotSync(
                     project_id=self.project_id, collection_id=self.collection_id,
@@ -104,9 +111,12 @@ class GroupCalendar:
                     credentials_path=self.credentials,
                     uploader=self._host_upload if self.connection.host_store else None,
                 )
-            self.sync.sync_once(refresh_revision=revision if revision > self._acked else None)
+            receipt = self.sync.sync_once(refresh_revision=revision if revision > self._acked else None)
             self._acked = revision
-            self._last_upload = time.monotonic()
+            self._uploaded = True
+            if receipt is not None:
+                print(f"Uploaded {receipt['event_count']} Calendar items for {self.connection.member_id} "
+                      f"(refresh {revision}).", flush=True)
             self._force = False
             self._receive(self.connection.snapshot())
 

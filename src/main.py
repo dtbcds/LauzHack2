@@ -40,6 +40,10 @@ def main(page: ft.Page) -> None:
     collection = os.environ.get("RELAY_COLLECTION_ID", "round-1")
     database = Path(os.environ.get("RELAY_DATABASE", str(ROOT / "data/coordinator.sqlite3")))
     mode = os.environ.get("RELAY_MODE", "coordinator")
+    member_label = os.environ.get("RELAY_MEMBER_ID", "").strip()
+    mode_label = "Group host" if mode == "group-host" else "Group" if mode == "group" else "Personal" if mode == "personal" else "Coordinator"
+    page.title = f"Relay — {mode_label}" + (f" ({member_label})" if member_label else "")
+    print(f"Relay mode: {mode}; member: {member_label or 'none'}; project: {project}/{collection}.", flush=True)
     personal = None
     group = None
     if mode in ("group", "group-host"):

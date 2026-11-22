@@ -324,9 +324,20 @@ class SubmissionStore:
                 "SELECT revision FROM refresh_requests WHERE project_id = ? AND collection_id = ?",
                 (project_id, collection_id),
             ).fetchone()
+            members = database.execute("""
+                SELECT m.member_id, a.revision FROM member_secrets m
+                LEFT JOIN refresh_acks a ON a.project_id = m.project_id
+                    AND a.collection_id = ? AND a.member_id = m.member_id
+                WHERE m.project_id = ? AND m.refresh_enabled = 1 ORDER BY m.member_id
+            """, (collection_id, project_id)).fetchall()
+        revision = refresh[0] if refresh else 0
         return {"project_id": project_id, "collection_id": collection_id,
                 "submissions": [json.loads(row[0]) for row in rows],
-                "refresh_revision": refresh[0] if refresh else 0}
+                "refresh_revision": revision,
+                "refresh_status": {"revision": revision, "members": {
+                    member: "received" if revision and ack == revision else "waiting"
+                    for member, ack in members
+                }}}
 
     def replace_collection(self, project_id: str, collection_id: str, submissions: list[dict]) -> int:
         """Replace a downloaded collection atomically in a member's local cache."""
