@@ -1,4 +1,5 @@
 flet==1.1.2
+flet-desktop==1.1.2
 ollama
 pydantic
 pytest

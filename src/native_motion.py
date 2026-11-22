@@ -1,6 +1,7 @@
 """Flet controls whose continuous interaction state belongs to Flutter."""
 
 import os
+import sys
 from pathlib import Path
 
 import flet as ft
@@ -53,11 +54,17 @@ class SettledSize(ft.LayoutControl):
 
 def configure_desktop_client() -> None:
     """Use the locally built client for the extension, including debugpy launches."""
-    client = (
-        Path(__file__).resolve().parents[1]
-        / "build/native_client/build/windows/x64/runner/Release"
-    )
-    if not (client / "flet.exe").is_file():
-        raise RuntimeError("Build the motion controls first: .\\tools\\build-client.ps1")
-
+    root = Path(__file__).resolve().parents[1] / "build/native_client/build"
+    if sys.platform == "darwin":
+        client = root / "macos/Build/Products/Release"
+        executable = client / "dependency_client.app/Contents/MacOS/dependency_client"
+        build_command = "bash tools/build-client-macos.sh"
+    elif sys.platform == "win32":
+        client = root / "windows/x64/runner/Release"
+        executable = client / "flet.exe"
+        build_command = r".\tools\build-client.ps1"
+    else:
+        raise RuntimeError("The custom desktop client supports macOS and Windows")
+    if not executable.is_file():
+        raise RuntimeError(f"Build the motion controls first: {build_command}")
     os.environ["FLET_VIEW_PATH"] = str(client)

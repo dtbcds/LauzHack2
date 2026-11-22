@@ -54,8 +54,18 @@ remain waiting. Analysis continues in the coordinator after uploads, and the
 screen displays its saved result automatically. The button can request another
 refresh if a member needs to reconnect.
 
-The current custom desktop client launcher requires the Windows build described
-above; a macOS build/launcher is still needed to open this UI on the Mac.
+On macOS, install Flutter and Xcode, then build the same custom controls with:
+
+```sh
+bash tools/build-client-macos.sh
+.venv/bin/python src/main.py
+```
+
+The build script finds Flutter on PATH or under `build/flutter-sdk/`. You can
+also pass its executable path as the first argument. Install Python dependencies
+with `.venv/bin/python -m pip install -r requirements.txt`. Rebuild after Dart
+changes; Python changes only require restarting the app. The launcher selects
+the Windows or macOS build automatically.
 
 ## Fine-tune task dependency classification
 
