@@ -6,12 +6,77 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import tempfile
+from dataclasses import dataclass
+from html import unescape
+from urllib.parse import unquote
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/tasks.readonly",
+]
+
+
+@dataclass
+class CalendarServices:
+    calendar: Any
+    tasks: Any
+
+    def events(self):
+        return self.calendar.events()
+
+
+def linked_task_id(description: str) -> str | None:
+    match = re.search(r"https://tasks\.google\.com/task/([A-Za-z0-9_%=-]+)", unescape(description))
+    return unquote(match.group(1)) if match else None
+
+
+def fill_task_descriptions(events: list[dict[str, Any]], service: Any) -> list[dict[str, Any]]:
+    """Resolve task links by exact web link/ID, never by a potentially duplicate title."""
+    linked = {event["id"]: linked_task_id(event.get("description") or "") for event in events}
+    if not any(linked.values()):
+        return events
+    tasks_by_link = {}
+    page = None
+    while True:
+        lists = service.tasklists().list(maxResults=100, pageToken=page).execute()
+        for tasklist in lists.get("items", []):
+            task_page = None
+            while True:
+                result = service.tasks().list(
+                    tasklist=tasklist["id"], maxResults=100, pageToken=task_page,
+                    showCompleted=True, showHidden=True, showDeleted=False,
+                ).execute()
+                for task in result.get("items", []):
+                    if task.get("deleted"):
+                        continue
+                    tasks_by_link[task["id"]] = task
+                    web_id = linked_task_id(task.get("webViewLink") or "")
+                    if web_id:
+                        tasks_by_link[web_id] = task
+                task_page = result.get("nextPageToken")
+                if not task_page:
+                    break
+        page = lists.get("nextPageToken")
+        if not page:
+            break
+    enriched = []
+    for event in events:
+        task_id = linked[event["id"]]
+        if task_id:
+            task = tasks_by_link.get(task_id)
+            if task is None:
+                raise RuntimeError(
+                    f"Could not match Google Tasks link for {event.get('summary', event['id'])!r}. "
+                    "Check that the authorized Google account owns the task."
+                )
+            event = {**event, "description": task.get("notes") or ""}
+        enriched.append(event)
+    return enriched
 
 
 def token_path_for_member(member_id: str | None) -> Path:
@@ -71,16 +136,22 @@ def connect_calendar(
             raise ValueError("OAuth token path must not be a symbolic link")
         if os.name == "posix":
             token_path.chmod(0o600)
-        credentials = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+        # Read the actual saved scopes, rather than labelling an old token with new ones.
+        credentials = Credentials.from_authorized_user_file(str(token_path))
+        if not credentials.has_scopes(SCOPES):
+            credentials = None
     if not credentials or not credentials.valid:
         if credentials and credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), SCOPES)
-            credentials = flow.run_local_server(port=0)
+            credentials = flow.run_local_server(port=0, prompt="consent")
         _save_token(token_path, credentials.to_json())
 
-    return build("calendar", "v3", credentials=credentials)
+    return CalendarServices(
+        build("calendar", "v3", credentials=credentials),
+        build("tasks", "v1", credentials=credentials),
+    )
 
 
 def fetch_events(
@@ -112,6 +183,8 @@ def fetch_events(
         events.extend(event for event in result.get("items", []) if event.get("status") != "cancelled")
         page_token = result.get("nextPageToken")
         if not page_token:
+            if isinstance(service, CalendarServices):
+                return fill_task_descriptions(events, service.tasks)
             return events
 
 

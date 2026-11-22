@@ -93,3 +93,66 @@ class GoogleCalendarTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_linked_task_notes_replace_placeholder_across_pages():
+    from unittest.mock import Mock
+    from app.calendar.google_calendar import fill_task_descriptions
+    service = Mock()
+    service.tasklists.return_value.list.return_value.execute.side_effect = [
+        {'items': [{'id': 'list1'}], 'nextPageToken': 'lists2'},
+        {'items': [{'id': 'list2'}]},
+    ]
+    service.tasks.return_value.list.return_value.execute.side_effect = [
+        {'items': [{'id': 'api-a', 'title': 'Same title', 'notes': 'Wrong task',
+                    'webViewLink': 'https://tasks.google.com/task/other'}], 'nextPageToken': 'tasks2'},
+        {'items': [{'id': 'api-b', 'title': 'Same title', 'notes': 'Wait for architecture',
+                    'webViewLink': 'https://tasks.google.com/task/link-b'}]},
+        {'items': [{'id': 'api-c', 'webViewLink': 'https://tasks.google.com/task/link-c'}]},
+    ]
+    events = [
+        {'id': 'event1', 'description': 'Placeholder https://tasks.google.com/task/link-b.'},
+        {'id': 'event2', 'description': 'Placeholder https://tasks.google.com/task/link-c.'},
+        {'id': 'event3', 'description': 'Ordinary description'},
+    ]
+    result = fill_task_descriptions(events, service)
+    assert [event['description'] for event in result] == ['Wait for architecture', '', 'Ordinary description']
+    assert events[0]['description'].startswith('Placeholder')
+    assert service.tasklists.return_value.list.call_args_list[1].kwargs['pageToken'] == 'lists2'
+    assert service.tasks.return_value.list.call_args_list[1].kwargs['pageToken'] == 'tasks2'
+
+
+def test_regular_events_do_not_fetch_tasks_and_unmatched_links_fail():
+    import pytest
+    from unittest.mock import Mock
+    from app.calendar.google_calendar import fill_task_descriptions
+    service = Mock()
+    events = [{'id': 'ordinary', 'description': 'No task link'}]
+    assert fill_task_descriptions(events, service) == events
+    service.tasklists.assert_not_called()
+    service.tasklists.return_value.list.return_value.execute.return_value = {'items': []}
+    with pytest.raises(RuntimeError, match='Could not match Google Tasks link'):
+        fill_task_descriptions([{'id': 'linked', 'description': 'https://tasks.google.com/task/missing'}], service)
+
+
+def test_calendar_only_token_requests_both_scopes_again(tmp_path):
+    from unittest.mock import Mock, patch
+    from app.calendar.google_calendar import connect_calendar, SCOPES
+    credential_file = tmp_path / 'credentials.json'
+    token_file = tmp_path / 'token.json'
+    credential_file.write_text('{}')
+    token_file.write_text('{}')
+    old = Mock(valid=True)
+    old.has_scopes.return_value = False
+    fresh = Mock()
+    fresh.to_json.return_value = '{"scopes": []}'
+    with patch('google.oauth2.credentials.Credentials.from_authorized_user_file', return_value=old) as load, \
+         patch('google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file') as flow, \
+         patch('googleapiclient.discovery.build') as build:
+        flow.return_value.run_local_server.return_value = fresh
+        connect_calendar(credential_file, token_file)
+        load.assert_called_once_with(str(token_file))
+        flow.assert_called_once_with(str(credential_file), SCOPES)
+        assert build.call_args_list[0].kwargs['credentials'] is fresh
+        assert build.call_args_list[1].args == ('tasks', 'v1')
+        assert token_file.read_text() == fresh.to_json.return_value

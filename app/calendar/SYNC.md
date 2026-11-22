@@ -65,3 +65,28 @@ the same coordinator SQLite database. The client uses its existing member
 secret and certificate; no new credential is needed. Each acknowledged upload
 also queues the usual dependency analysis. With `--no-analysis`, snapshots are
 saved and analysis stays pending until a model-enabled coordinator starts.
+
+## Google Tasks linked from Calendar
+
+Enable Google Tasks API in the same Cloud project and add
+`https://www.googleapis.com/auth/tasks.readonly` to the OAuth consent configuration.
+The client requests Calendar and Tasks read-only access together. Existing
+Calendar-only tokens cause a new consent window automatically; approve both
+permissions. The credentials file stays the same.
+
+Calendar entries with `https://tasks.google.com/task/...` links are matched to
+Tasks by their web link or task ID. Their actual `notes` replace Calendar's
+placeholder description before upload. Empty task notes become an empty
+description. Ordinary event descriptions are preserved. Tasks without Calendar
+entries are not added. An unmatched task link or Tasks API error stops that
+snapshot upload and prints an error, so placeholder text is not silently sent
+for dependency extraction. Titles are never used to guess a match.
+
+After pulling the update, stop and restart the client. To inspect the resolved
+descriptions on Windows before uploading:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.calendar.google_calendar --member-id dany
+```
+
+Then restart the usual `--on-demand` command and click Refresh on the coordinator.
