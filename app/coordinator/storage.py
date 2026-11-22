@@ -49,6 +49,9 @@ class SubmissionStore:
                     PRIMARY KEY (project_id, member_id)
                 )
             """)
+            columns = {row[1] for row in database.execute("PRAGMA table_info(member_secrets)")}
+            if "refresh_enabled" not in columns:
+                database.execute("ALTER TABLE member_secrets ADD COLUMN refresh_enabled INTEGER NOT NULL DEFAULT 1")
             database.execute("""
                 CREATE TABLE IF NOT EXISTS analyses (
                     project_id TEXT NOT NULL,
@@ -165,6 +168,16 @@ class SubmissionStore:
                 WHERE project_id = ? AND collection_id = ?
             """, (project_id, collection_id)).fetchone()[0]
 
+    def set_refresh_enabled(self, project_id: str, member_id: str, enabled: bool) -> None:
+        """Include/exclude a registered member from Calendar refresh progress."""
+        with self._connect() as database:
+            changed = database.execute(
+                "UPDATE member_secrets SET refresh_enabled = ? WHERE project_id = ? AND member_id = ?",
+                (int(enabled), project_id, member_id),
+            )
+            if changed.rowcount != 1:
+                raise ValueError("Unknown project member")
+
     def get_refresh_revision(self, project_id: str, collection_id: str) -> int:
         with self._connect() as database:
             row = database.execute("""
@@ -186,7 +199,8 @@ class SubmissionStore:
                   ON refresh_acks.project_id = member_secrets.project_id
                  AND refresh_acks.collection_id = ?
                  AND refresh_acks.member_id = member_secrets.member_id
-                WHERE member_secrets.project_id = ? ORDER BY member_secrets.member_id
+                WHERE member_secrets.project_id = ? AND member_secrets.refresh_enabled = 1
+                ORDER BY member_secrets.member_id
             """, (collection_id, project_id)).fetchall()
         revision, requested_at = request if request else (0, None)
         return {

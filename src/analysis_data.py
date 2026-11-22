@@ -58,7 +58,7 @@ def refresh_message(state: dict) -> str:
         return ""
     members = state["members"]
     if not members:
-        return "No project members registered."
+        return "No members need to send a Calendar refresh."
     waiting = [member for member, status in members.items() if status != "received"]
     received = len(members) - len(waiting)
     if waiting:

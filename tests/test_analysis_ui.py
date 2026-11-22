@@ -94,3 +94,18 @@ def test_refresh_button_requests_selected_collection(tmp_path, monkeypatch):
     assert store.get_refresh_revision('team', 'round-2') == 1
     assert not button.disabled
     assert 'dany' in captured['status_control'].controls[0].value
+
+
+def test_coordinator_can_be_excluded_from_refresh_without_losing_access(tmp_path):
+    from app.coordinator.storage import SubmissionStore
+    database = tmp_path / 'coordinator.sqlite3'
+    store = SubmissionStore(database)
+    secret = store.register_member('team', 'nil')
+    store.register_member('team', 'dany')
+    store.set_refresh_enabled('team', 'nil', False)
+    store.request_refresh('team', 'round-1')
+    restarted = SubmissionStore(database)
+    assert restarted.get_refresh_status('team', 'round-1')['members'] == {'dany': 'waiting'}
+    assert restarted.is_authorized('team', 'nil', secret)
+    restarted.set_refresh_enabled('team', 'nil', True)
+    assert set(restarted.get_refresh_status('team', 'round-1')['members']) == {'nil', 'dany'}
