@@ -312,6 +312,43 @@ class SubmissionStore:
         expected_hash = row[0] if row else "0" * 64
         return hmac.compare_digest(provided_hash, expected_hash) and row is not None
 
+    def collection_snapshot(self, project_id: str, collection_id: str) -> dict[str, Any]:
+        """Read event snapshots and refresh metadata from one SQLite snapshot."""
+        with self._connect() as database:
+            database.execute("BEGIN")
+            rows = database.execute(
+                "SELECT payload_json FROM submissions WHERE project_id = ? AND collection_id = ? ORDER BY member_id",
+                (project_id, collection_id),
+            ).fetchall()
+            refresh = database.execute(
+                "SELECT revision FROM refresh_requests WHERE project_id = ? AND collection_id = ?",
+                (project_id, collection_id),
+            ).fetchone()
+        return {"project_id": project_id, "collection_id": collection_id,
+                "submissions": [json.loads(row[0]) for row in rows],
+                "refresh_revision": refresh[0] if refresh else 0}
+
+    def replace_collection(self, project_id: str, collection_id: str, submissions: list[dict]) -> int:
+        """Replace a downloaded collection atomically in a member's local cache."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as database:
+            database.execute("DELETE FROM submissions WHERE project_id = ? AND collection_id = ?",
+                             (project_id, collection_id))
+            for item in submissions:
+                if item["project_id"] != project_id or item["collection_id"] != collection_id:
+                    raise ValueError("Downloaded collection IDs do not match")
+                database.execute("INSERT INTO submissions VALUES (?, ?, ?, ?, ?)",
+                                 (project_id, collection_id, item["member_id"], now, json.dumps(item)))
+            database.execute("""
+                INSERT INTO analyses (project_id, collection_id, revision, status, updated_at)
+                VALUES (?, ?, 1, 'pending', ?)
+                ON CONFLICT(project_id, collection_id) DO UPDATE SET
+                    revision = revision + 1, status = 'pending', result_json = NULL,
+                    error = NULL, updated_at = excluded.updated_at
+            """, (project_id, collection_id, now))
+            return database.execute("SELECT revision FROM analyses WHERE project_id = ? AND collection_id = ?",
+                                    (project_id, collection_id)).fetchone()[0]
+
     def list_for_collection(self, project_id: str, collection_id: str) -> list[dict[str, Any]]:
         """Return the latest submission from each member in this collection."""
         with self._connect() as database:

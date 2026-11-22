@@ -67,6 +67,11 @@ with `.venv/bin/python -m pip install -r requirements.txt`. Rebuild after Dart
 changes; Python changes only require restarting the app. The launcher selects
 the Windows or macOS build automatically.
 
+## Shared group view
+
+See [group setup](app/calendar/GROUP.md) to upload each member’s Calendar and
+show the combined group on every computer, with local analysis on each.
+
 ## Personal Calendar on each computer
 
 To fetch and analyse your own Calendar locally without running a coordinator,

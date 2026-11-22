@@ -132,6 +132,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
@@ -140,12 +141,15 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         if parts.path == "/health":
             self._send_json(HTTPStatus.OK, {"status": "ok"})
             return
-        if parts.path != "/refresh-requests":
+        if parts.path not in ("/refresh-requests", "/collection-snapshot"):
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "Unknown route"})
             return
         try:
             query = parse_qs(parts.query, strict_parsing=True)
-            if (set(query) != {"project_id", "collection_id", "member_id", "after"}
+            expected = {"project_id", "collection_id", "member_id"}
+            if parts.path == "/refresh-requests":
+                expected.add("after")
+            if (set(query) != expected
                     or any(len(values) != 1 for values in query.values())):
                 raise ValueError("Expected project_id, collection_id, member_id, and after")
             project_id, collection_id, member_id = (
@@ -153,7 +157,7 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             )
             if not all(value.strip() for value in (project_id, collection_id, member_id)):
                 raise ValueError("IDs must be non-empty")
-            after = int(query["after"][0])
+            after = int(query.get("after", ["0"])[0])
             if after < 0:
                 raise ValueError("after must be non-negative")
         except (ValueError, KeyError, IndexError):
@@ -162,6 +166,9 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         try:
             if not self._is_authorized(project_id, member_id):
                 self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "Invalid member secret"})
+                return
+            if parts.path == "/collection-snapshot":
+                self._send_json(HTTPStatus.OK, self.server.store.collection_snapshot(project_id, collection_id))
                 return
             deadline = time.monotonic() + 20
             while True:
@@ -175,7 +182,8 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, {"revision": revision})
 
     def do_POST(self) -> None:
-        if urlsplit(self.path).path != "/submissions":
+        route = urlsplit(self.path).path
+        if route not in ("/submissions", "/refresh"):
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "Unknown route"})
             return
         if self.headers.get_content_type() != "application/json":
@@ -192,7 +200,13 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "JSON body is too large"})
             return
         try:
-            payload = validate_submission(json.loads(self.rfile.read(length)))
+            payload = json.loads(self.rfile.read(length))
+            if route == "/refresh":
+                if not isinstance(payload, dict) or set(payload) != {"project_id", "collection_id", "member_id"}:
+                    raise ValueError("Expected project_id, collection_id, member_id")
+                validate_submission({**payload, "events": []})
+            else:
+                payload = validate_submission(payload)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
@@ -207,6 +221,10 @@ class CoordinatorHandler(BaseHTTPRequestHandler):
             return
 
         try:
+            if route == "/refresh":
+                revision = self.server.store.request_refresh(payload["project_id"], payload["collection_id"])
+                self._send_json(HTTPStatus.OK, {"revision": revision})
+                return
             refresh_header = self.headers.get("X-Refresh-Revision")
             refresh_revision = int(refresh_header) if refresh_header is not None else None
             revision = self.server.store.save(payload, refresh_revision=refresh_revision)

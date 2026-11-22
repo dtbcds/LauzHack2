@@ -12,7 +12,7 @@ import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -107,6 +107,7 @@ class CalendarSnapshotSync:
         coordinator_url: str, secret: str, credentials_path: str | Path = "credentials.json",
         calendar_id: str = "primary", days_ahead: int = 14,
         ca_cert: str | Path | None = None, service: Any | None = None,
+        uploader: Callable[..., dict[str, Any]] | None = None,
     ):
         if not project_id.strip() or not collection_id.strip() or not member_id.strip():
             raise ValueError("project_id, collection_id, and member_id must be non-empty")
@@ -132,6 +133,13 @@ class CalendarSnapshotSync:
             credentials_path, token_path_for_member(member_id)
         )
         self._last_uploaded_hash: bytes | None = None
+        self._uploader = uploader
+
+    def upload(self, payload: dict[str, Any], *, refresh_revision: int | None = None) -> dict[str, Any]:
+        if self._uploader is not None:
+            return self._uploader(payload, refresh_revision=refresh_revision)
+        return post_submission(payload, coordinator_url=self.coordinator_url, secret=self.secret,
+                               ca_cert=self.ca_cert, refresh_revision=refresh_revision)
 
     def sync_once(self, *, refresh_revision: int | None = None) -> dict[str, Any] | None:
         """Upload on first check or after an add, edit, or deletion."""
@@ -158,10 +166,7 @@ class CalendarSnapshotSync:
             "member_id": self.member_id,
             "events": prepared,
         }
-        receipt = post_submission(
-            payload, coordinator_url=self.coordinator_url,
-            secret=self.secret, ca_cert=self.ca_cert, refresh_revision=refresh_revision,
-        )
+        receipt = self.upload(payload, refresh_revision=refresh_revision)
         self._last_uploaded_hash = snapshot_hash
         return receipt
 
