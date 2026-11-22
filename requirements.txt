@@ -1,4 +1,4 @@
-flet>=1.0
+flet==1.1.2
 ollama
 pydantic
 pytest

@@ -1,5 +1,26 @@
 # LauzHack2
 
+## Desktop UI
+
+Graph gestures and side-panel resizing run in the custom Flutter client in
+`flutter_client/`. Python receives the settled graph transform and panel width;
+it handles data, filters, queries, and task selection.
+
+Build the client once with Flutter 3.47 or later and the Visual Studio C++ desktop
+toolchain installed:
+
+```powershell
+.\tools\build-client.ps1
+.\.venv\Scripts\python.exe src/main.py
+```
+
+If Flutter is not on PATH, pass `-Flutter 'C:\path\to\flutter\bin\flutter.bat'`.
+The script also recognizes a project-local SDK in `build/flutter-sdk/`.
+Rebuild after editing Dart files. Python changes and the existing VS Code launch
+configuration use the built client automatically. Generated client files and
+binaries stay in the ignored `build/` directory. The Python and Flutter Flet
+versions are pinned together at 1.1.2.
+
 ## Fine-tune task dependency classification
 
 `train_dependency_model.py` fine-tunes the Hugging Face `Qwen/Qwen3-8B`

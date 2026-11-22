@@ -1,0 +1,11 @@
+name: dependency_client
+publish_to: none
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  flet: 1.1.2
+  material_ui: 1.11.1
+flutter:
+  uses-material-design: true

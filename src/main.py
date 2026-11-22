@@ -3,6 +3,7 @@ import flet as ft
 import palette
 from demo_data import DEMO_ORGANISATIONS
 from workspace import mount_workspace
+from native_motion import configure_desktop_client
 
 
 def main(page: ft.Page) -> None:
@@ -22,4 +23,5 @@ def main(page: ft.Page) -> None:
 
 
 if __name__ == "__main__":
+    configure_desktop_client()
     ft.run(main)
