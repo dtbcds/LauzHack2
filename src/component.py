@@ -141,16 +141,10 @@ def task_detail(task: Task, close: Callable[[Task | None], None],
         ),
     ]
     if task.evidence:
-        confidence = (
-            f"{task.confidence:.0%} confidence"
-            if task.confidence is not None
-            else "Confidence unavailable"
-        )
         sections.append(
             section(
                 "Dependency evidence",
                 body(task.evidence, italic=True),
-                note(confidence),
             )
         )
 
