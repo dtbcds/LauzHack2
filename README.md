@@ -116,21 +116,30 @@ network, quota, incomplete output, and validation failures.
 
 ## Desktop bottleneck notifications
 
-Install `requirements.txt`, then pass the existing bottleneck results to the
-notification check after scoring:
+The desktop UI automatically checks each completed (`ready`) analysis snapshot.
+It shows a persistent in-app alert and submits native Windows/macOS notifications
+for bottlenecks with priority at least 75 and either three downstream tasks or two
+affected coworkers. Partial or failed analyses do not notify. Unknown Calendar
+completion status is labelled as a potential bottleneck; completed tasks never notify.
 
-```python
-from graph_construction import calculate_priority, detect_bottlenecks
-from notifications import run_bottleneck_check
+Native submissions have a four-hour cooldown per task, project/collection, and
+viewer. The app persists cooldowns in ignored `data/notifications.json`, so refreshes
+and restarts do not spam alerts. Failed submissions do not start the cooldown.
+The in-app alert remains available while qualifying tasks exist, regardless of
+native delivery or cooldown. It clears on a later analysis without qualifying tasks.
 
-scores = calculate_priority(graph)
-run_bottleneck_check(detect_bottlenecks(graph, scores))
+Windows uses `winotify` (included in requirements); macOS uses `osascript`. OS
+notification settings and Focus/Do Not Disturb can suppress a submitted pop-up.
+The app can confirm submission, but cannot confirm that the OS displayed it.
+Test native delivery without Calendar, OpenAI charges, or cooldown changes:
+
+```sh
+python -m notifications --test
 ```
 
-Bottlenecks with priority at least 75 and at least three downstream tasks
-or two affected coworkers generate a native Windows toast or macOS notification.
-Successful sends are limited to one per task every four hours, including across
-restarts. Windows uses `winotify`; macOS uses the built-in `osascript` command.
+For the current Report → Presentation → Grade presentation chain with three
+owners, Report can qualify as a potential bottleneck because it affects two
+coworkers and has high priority. Restart the UI after pulling this change.
 
 ## UI graph data
 
