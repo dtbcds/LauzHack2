@@ -16,7 +16,9 @@ tasks as candidates, then passes the collected edges to `build_graph` and
 `graph_to_ui_data`. With zero or one event, no Ollama call is needed. The result
 and its `pending`, `processing`, `ready`, or `failed` status are saved in the
 coordinator's SQLite database. An analysis failure does not discard the uploaded
-events or the previous graph result.
+events or the previous graph result. Failed runs are retried when the
+coordinator restarts, so installing a missing dependency does not require
+another employee upload.
 
 On the coordinator computer, inspect the latest state without stopping the
 server:

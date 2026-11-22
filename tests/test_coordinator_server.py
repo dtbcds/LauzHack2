@@ -226,6 +226,26 @@ class CoordinatorServerTests(unittest.TestCase):
                 time.sleep(0.01)
             self.assertEqual(state["result"], {"event_count": 0})
 
+    def test_failed_analysis_is_retried_when_server_restarts(self):
+        retry_path = Path(self.directory.name) / "retry.sqlite3"
+        store = SubmissionStore(retry_path)
+        payload = {"project_id": "demo", "collection_id": "round-1", "member_id": "dany", "events": []}
+        revision = store.save(payload)
+        store.finish_analysis("demo", "round-1", revision, error="networkx missing")
+
+        with CoordinatorServer(
+            ("127.0.0.1", 0), retry_path,
+            analyzer=lambda submissions: {"event_count": sum(len(item["events"]) for item in submissions)},
+        ) as restarted:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                state = restarted.store.get_analysis("demo", "round-1")
+                if state and state["status"] == "ready":
+                    break
+                time.sleep(0.01)
+            self.assertEqual(state["result"], {"event_count": 0})
+            self.assertIsNone(state["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

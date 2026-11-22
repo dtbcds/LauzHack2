@@ -111,11 +111,11 @@ class SubmissionStore:
         return revision
 
     def pending_analyses(self) -> list[tuple[str, str, int]]:
-        """Return unfinished jobs, including jobs interrupted by a restart."""
+        """Return jobs to retry after a restart, including failed runs."""
         with self._connect() as database:
             rows = database.execute("""
                 SELECT project_id, collection_id, revision FROM analyses
-                WHERE status IN ('pending', 'processing')
+                WHERE status IN ('pending', 'processing', 'failed')
             """).fetchall()
         return [(project_id, collection_id, revision) for project_id, collection_id, revision in rows]
 
@@ -124,7 +124,7 @@ class SubmissionStore:
             changed = database.execute("""
                 UPDATE analyses SET status = 'processing', updated_at = ?
                 WHERE project_id = ? AND collection_id = ? AND revision = ?
-                  AND status IN ('pending', 'processing')
+                  AND status IN ('pending', 'processing', 'failed')
             """, (datetime.now(timezone.utc).isoformat(), project_id, collection_id, revision))
         return changed.rowcount == 1
 
