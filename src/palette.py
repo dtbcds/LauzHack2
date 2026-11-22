@@ -12,7 +12,8 @@ TEXT = "#E5E4E2"
 MUTED = "#A8A6A3"
 ACCENT = "#92ACC8"
 AMBER = "#D5BA91"
-AMBER_BG = "#40342A"
+BOTTLENECK = "#D28B88"
+BOTTLENECK_BG = "#412E30"
 
 SMALL = 8
 MEDIUM = 16
@@ -137,8 +138,8 @@ def select_menu(
 
 def tag(value: str, *, highlighted: bool = False) -> ft.Container:
     return ft.Container(
-        ft.Text(value, size=12, color=AMBER if highlighted else MUTED),
-        bgcolor=AMBER_BG if highlighted else CONTROL,
+        ft.Text(value, size=12, color=BOTTLENECK if highlighted else MUTED),
+        bgcolor=BOTTLENECK_BG if highlighted else CONTROL,
         border_radius=4,
         padding=ft.Padding.symmetric(vertical=3, horizontal=SMALL),
     )

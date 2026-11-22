@@ -16,7 +16,6 @@ def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]
     organisation = next(iter(organisations))
 
     sidebar_width = 56
-    width = (page.width or page.window.width or 1280) - sidebar_width
 
     active_task: Task | None = None
 
@@ -24,7 +23,7 @@ def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]
     ask_content: ft.Column | None = None
     query_task_ids: set[str] | None = None
 
-    side_panel = SidePanel(width, lambda: close_peek())
+    side_panel = SidePanel(lambda: close_peek())
 
     def refresh_peek() -> None:
         if asking:
@@ -161,14 +160,31 @@ def mount_workspace(page: ft.Page, organisations: Mapping[str, tuple[Task, ...]]
             close_peek()
 
     page.on_keyboard_event = handle_keyboard
-    workspace = side_panel.wrap(board.control)
+    switcher_height = palette.CONTROL_HEIGHT + 2 * palette.MEDIUM + 6
+    board.control.margin = ft.Margin.only(top=switcher_height)
+    board_surface = board.gesture_surface(board.control, expand=True)
+    switcher_surface = board.gesture_surface(
+        board.view_switch,
+        width=board.view_switch.width,
+        height=board.view_switch.height,
+        top=palette.MEDIUM,
+    )
+
+    workspace = side_panel.wrap(board_surface)
 
     page.add(
         ft.Container(
-            ft.Row(
-                [sidebar, workspace],
-                spacing=0,
-                vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+            ft.Stack(
+                [
+                    ft.Row(
+                        [sidebar, workspace],
+                        spacing=0,
+                        vertical_alignment=ft.CrossAxisAlignment.STRETCH,
+                    ),
+                    switcher_surface,
+                ],
+                fit=ft.StackFit.EXPAND,
+                alignment=ft.Alignment.TOP_CENTER,
             ),
             expand=True,
             bgcolor=ft.Colors.TRANSPARENT,

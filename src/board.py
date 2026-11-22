@@ -6,15 +6,19 @@ import flet as ft
 import palette as p
 from component import Task, format_deadline
 from filters import task_filters
+from graph import TaskGraph
+from native_motion import GraphGestureSurface, SettledSize
 
 
 @dataclass
 class TaskBoard:
-    control: ft.Container
+    control: ft.LayoutControl
+    view_switch: ft.Container
     select: Callable[[Task | None], None]
     dismiss_filters: Callable[[], bool]
     set_tasks: Callable[[tuple[Task, ...]], None]
     show_query_result: Callable[[set[str] | None], None]
+    gesture_surface: Callable[..., GraphGestureSurface]
 
 
 def task_board(
@@ -27,6 +31,9 @@ def task_board(
 
     compact = False
     narrow = False
+    graph_view = TaskGraph(lambda task: select(task))
+    graph_view.set_tasks(tasks)
+    gesture_surfaces: list[GraphGestureSurface] = []
 
     rows = ft.ListView(expand=True, spacing=0)
     count = ft.Text(size=12, color=p.MUTED)
@@ -42,10 +49,10 @@ def task_board(
     impact_callout = ft.Container(
         ft.Row(
             [
-                ft.Icon(ft.Icons.ACCOUNT_TREE_OUTLINED, size=17, color=p.AMBER),
+                ft.Icon(ft.Icons.ACCOUNT_TREE_OUTLINED, size=17, color=p.BOTTLENECK),
                 ft.Column(
                     [
-                        ft.Text("Highest-impact bottleneck", size=12, color=p.AMBER),
+                        ft.Text("Highest-impact bottleneck", size=12, color=p.BOTTLENECK),
                         impact_title,
                         impact_detail,
                     ],
@@ -121,7 +128,7 @@ def task_board(
                 ft.Icon(
                     ft.Icons.WARNING_AMBER_ROUNDED,
                     size=15,
-                    color=p.AMBER,
+                    color=p.BOTTLENECK,
                     tooltip="Bottleneck",
                 )
             )
@@ -162,7 +169,7 @@ def task_board(
                         str(task.downstream_count),
                         width=76,
                         size=13,
-                        color=p.AMBER if highest_impact else p.MUTED,
+                        color=p.BOTTLENECK if highest_impact else p.MUTED,
                         weight=ft.FontWeight.W_600 if highest_impact else None,
                         tooltip=(
                             "Most downstream tasks among visible bottlenecks"
@@ -217,6 +224,9 @@ def task_board(
 
         count.value = f"{len(shown)} {'task' if len(shown) == 1 else 'tasks'}"
 
+        if graph_view.control.visible:
+            graph_view.render(selected, highlighted, {task.id for task in shown})
+
     def select(task: Task | None) -> None:
         nonlocal selected
 
@@ -236,6 +246,7 @@ def task_board(
         nonlocal tasks, selected
 
         tasks = records
+        graph_view.set_tasks(records)
         selected = None
         highlighted.clear()
         query_scope.visible = False
@@ -276,38 +287,93 @@ def task_board(
     def resize_list_area(event: ft.LayoutSizeChangeEvent) -> None:
         filters.resize_popover(event.height)
 
-    view_controls: list[ft.Control] = [
-        ft.Icon(ft.Icons.VIEW_LIST_OUTLINED, size=16, color=p.ACCENT),
-        ft.Text("List", size=13, color=p.TEXT),
-        ft.Container(expand=True),
-    ]
-    if ask_button is not None:
-        view_controls.append(ask_button)
-
     table = ft.Column([header_row, rows], spacing=0, expand=True)
     list_content = ft.Column([impact_callout, table, count], spacing=p.MEDIUM)
     list_area = ft.Stack(
-        [list_content, filters.dismiss_area, filters.popover],
+        [list_content],
         expand=True,
         fit=ft.StackFit.EXPAND,
-        on_size_change=resize_list_area,
+    )
+
+    def show_view(use_graph: bool) -> None:
+        filters.dismiss()
+        list_area.visible = not use_graph
+        graph_view.control.visible = use_graph
+        list_style.bgcolor = ft.Colors.TRANSPARENT if use_graph else p.SURFACE
+        graph_style.bgcolor = p.SURFACE if use_graph else ft.Colors.TRANSPARENT
+        list_style.color = p.MUTED if use_graph else p.TEXT
+        graph_style.color = p.TEXT if use_graph else p.MUTED
+
+        for surface in gesture_surfaces:
+            surface.active = use_graph
+
+        render(keep_selection=True)
+
+    def gesture_surface(content: ft.Control, **layout) -> GraphGestureSurface:
+        surface = graph_view.gesture_surface(content, **layout)
+        surface.active = bool(graph_view.control.visible)
+        gesture_surfaces.append(surface)
+
+        return surface
+
+    list_style = ft.ButtonStyle(
+        bgcolor=p.SURFACE, color=p.TEXT,
+        shape=ft.RoundedRectangleBorder(radius=24),
+        padding=ft.Padding.symmetric(horizontal=p.MEDIUM),
+    )
+    graph_style = ft.ButtonStyle(
+        bgcolor=ft.Colors.TRANSPARENT, color=p.MUTED,
+        shape=ft.RoundedRectangleBorder(radius=24),
+        padding=ft.Padding.symmetric(horizontal=p.MEDIUM),
+    )
+
+    list_tab = ft.TextButton(
+        "List View", width=136, height=p.CONTROL_HEIGHT,
+        style=list_style,
+        on_click=lambda: show_view(False),
+    )
+    graph_tab = ft.TextButton(
+        "Graph View", width=136, height=p.CONTROL_HEIGHT,
+        style=graph_style,
+        on_click=lambda: show_view(True),
+    )
+    view_switch = ft.Container(
+        ft.Row([list_tab, graph_tab], spacing=0, tight=True),
+        width=278,
+        height=p.CONTROL_HEIGHT + 6,
+        bgcolor=p.CONTROL, padding=2, border_radius=24,
+        border=ft.Border.all(1, p.DIVIDER),
+    )
+    title_controls: list[ft.Control] = [
+        ft.Text("Tasks", size=36, weight=ft.FontWeight.W_700, color=p.TEXT),
+        ft.Container(expand=True),
+    ]
+    if ask_button is not None:
+        title_controls.append(ask_button)
+
+    content_area = ft.Stack(
+        [list_area, graph_view.control, filters.dismiss_area, filters.popover],
+        expand=True,
+        fit=ft.StackFit.EXPAND,
     )
 
     control = ft.Container(
         ft.Column(
             [
-                ft.Text("Tasks", size=36, weight=ft.FontWeight.W_700, color=p.TEXT),
-                ft.Row(view_controls, spacing=p.SMALL),
+                ft.Row(title_controls, spacing=p.SMALL),
                 filters.toolbar,
                 query_scope,
-                list_area,
+                SettledSize(content_area, expand=True, on_settled=resize_list_area),
             ],
             spacing=p.MEDIUM,
         ),
         padding=ft.Padding.symmetric(vertical=p.LARGE, horizontal=p.GUTTER),
         expand=True,
-        on_size_change=resize,
     )
     render()
 
-    return TaskBoard(control, select, filters.dismiss, set_tasks, show_query_result)
+    return TaskBoard(
+        SettledSize(control, expand=True, on_settled=resize),
+        view_switch, select, filters.dismiss, set_tasks, show_query_result,
+        gesture_surface,
+    )
