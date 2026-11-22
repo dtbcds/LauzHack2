@@ -22,6 +22,7 @@ Future<void> main(List<String> arguments) async {
 
   runApp(
     FletApp(
+      title: 'Relay',
       pageUrl: arguments[0],
       assetsDir: arguments.length > 2 ? arguments[2] : '',
       extensions: [MotionExtension()],

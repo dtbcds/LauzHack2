@@ -29,6 +29,19 @@ if (-not (Test-Path (Join-Path $clientRoot 'windows'))) {
 
 Copy-Item -LiteralPath (Join-Path $repoRoot 'flutter_client/pubspec.yaml') -Destination $clientRoot
 Copy-Item -Path (Join-Path $repoRoot 'flutter_client/lib/*.dart') -Destination (Join-Path $clientRoot 'lib')
+Copy-Item -LiteralPath (Join-Path $repoRoot 'assets/relay.ico') `
+    -Destination (Join-Path $clientRoot 'windows/runner/resources/app_icon.ico')
+
+# Brand the generated runner without checking generated Windows files into Git.
+$resourcePath = Join-Path $clientRoot 'windows/runner/Runner.rc'
+$resources = Get-Content -LiteralPath $resourcePath -Raw
+$resources.Replace('"dependency_client"', '"Relay"') |
+    Set-Content -LiteralPath $resourcePath -Encoding utf8
+
+$runnerPath = Join-Path $clientRoot 'windows/runner/main.cpp'
+$runner = Get-Content -LiteralPath $runnerPath -Raw
+$runner.Replace('L"dependency_client"', 'L"Relay"') |
+    Set-Content -LiteralPath $runnerPath -Encoding utf8
 
 Push-Location $clientRoot
 try {
@@ -41,6 +54,8 @@ try {
     & $Flutter build windows --release --no-tree-shake-icons
     if ($LASTEXITCODE) { throw 'Flutter client build failed.' }
 
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'assets/LICENSE.lucide') `
+        -Destination 'build/windows/x64/runner/Release/LICENSE.lucide'
     Copy-Item -LiteralPath 'build/windows/x64/runner/Release/dependency_client.exe' `
         -Destination 'build/windows/x64/runner/Release/flet.exe'
 } finally {

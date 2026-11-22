@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 32 32">
+  <title>Relay</title>
+  <desc>Two task blocks connected by a handoff. Adapted from Lucide Workflow.</desc>
+  <rect width="32" height="32" rx="8" fill="#242426"/>
+  <g transform="translate(1 1) scale(1.25)" fill="none" stroke="#92ACC8"
+     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect width="8" height="8" x="3" y="3" rx="2"/>
+    <path d="M7 11v4a2 2 0 0 0 2 2h4"/>
+    <rect width="8" height="8" x="13" y="13" rx="2" stroke="#E5E4E2"/>
+  </g>
+</svg>

@@ -1,4 +1,6 @@
-# LauzHack2
+# Relay
+
+See what’s holding the team back. Keep work moving.
 
 ## Desktop UI
 
@@ -25,6 +27,10 @@ Rebuild after editing Dart files. Python changes and the existing VS Code launch
 configuration use the built client automatically. Generated client files and
 binaries stay in the ignored `build/` directory. The Python and Flutter Flet
 versions are pinned together at 1.1.2.
+
+The app mark in `assets/relay.svg` is adapted from Lucide's Workflow icon.
+Its ISC license is included in `assets/LICENSE.lucide`. The matching PNG preview
+and Windows ICO are included; the desktop build embeds the ICO automatically.
 
 ## Fine-tune task dependency classification
 

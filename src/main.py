@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import flet as ft
 
 import palette
@@ -7,7 +9,8 @@ from native_motion import configure_desktop_client
 
 
 def main(page: ft.Page) -> None:
-    page.title = "Dependency Intelligence"
+    page.title = "Relay"
+    page.window.icon = str(Path(__file__).resolve().parents[1] / "assets/relay.ico")
     page.theme_mode = ft.ThemeMode.DARK
     page.theme = ft.Theme(font_family="Segoe UI", color_scheme_seed=palette.ACCENT)
     page.bgcolor = palette.BACKGROUND
