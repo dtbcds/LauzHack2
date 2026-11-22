@@ -1,7 +1,7 @@
 # Shared group data with analysis on each computer
 
 All group apps upload their own prepared Calendar snapshot, download the combined
-collection, and compute their own graph using local Ollama. The coordinator
+collection, and request dependencies from OpenAI and compute their own graph locally. The coordinator
 shares event JSON, not Google tokens, member secrets, or its SQLite file. A
 registered member's existing secret authorizes reading their project's collection.
 
@@ -53,9 +53,11 @@ previous member snapshot. Offline members' last uploads remain visible until the
 reconnect. A group snapshot can include older data from an offline member.
 
 Only changed combined event data triggers automatic local analysis. Calendar
-items appear before dependency inference finishes. On model failure, items still
-appear and the error is shown; Refresh retries. Use the same `DEPENDENCY_MODEL`
-on each machine for comparable graphs. Local model results can still differ.
+items appear before dependency inference finishes. On API failure, items still
+appear and the error is shown; Refresh retries. Each computer needs an ignored
+`.env` with `OPENAI_API_KEY` and optionally `OPENAI_MODEL` (default `gpt-4.1`).
+Use the same model for comparable graphs. Each UI makes its own API requests;
+see the main README for setup and API credit usage. Results may still differ.
 
 The app caches group data and analysis in `data/group-<member hash>.sqlite3`,
 separate from personal mode and the coordinator's database. Restarting loads the

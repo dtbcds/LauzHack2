@@ -58,27 +58,27 @@ def analyze_submissions(
             on_progress(partial, completed, len(tasks))
 
     if len(tasks) > 1 and extractor is None:
-        from dependency_extraction import extract_dependencies
+        from dependency_extraction import cache_namespace, extract_group_dependencies
 
-        model_tasks = [
-            {key: task[key] for key in ("id", "title", "description", "owner")}
-            for task in tasks
-        ]
+        model_tasks = [{key: task[key] for key in ("id", "title", "description", "owner")}
+                       for task in tasks]
         model_tasks.sort(key=lambda task: task["id"])
-        snapshot = json.dumps(model_tasks, ensure_ascii=False, sort_keys=True)
+        snapshot = cache_namespace() + json.dumps(model_tasks, ensure_ascii=False, sort_keys=True)
         cached = _dependency_cache.get(snapshot)
         if cached is not None:
             _dependency_cache.move_to_end(snapshot)
             dependencies = list(cached)
         else:
-            publish(0)
-            for index, task in enumerate(model_tasks, 1):
-                candidates = [candidate for candidate in model_tasks if candidate["id"] != task["id"]]
-                dependencies.extend(extract_dependencies(task, candidates)["dependencies"])
-                publish(index)
+            if on_progress:
+                on_progress(graph_to_ui_data(build_graph(tasks, [])), 0, 1)
+            dependencies = extract_group_dependencies(model_tasks)["dependencies"]
+            # Validate the complete graph before caching; real cycles remain errors.
+            graph_to_ui_data(build_graph(tasks, dependencies))
             _dependency_cache[snapshot] = tuple(dependencies)
             if len(_dependency_cache) > 8:
                 _dependency_cache.popitem(last=False)
+        if on_progress:
+            on_progress(graph_to_ui_data(build_graph(tasks, dependencies)), 1, 1)
     else:
         publish(0)
         if extractor is not None:
@@ -88,7 +88,11 @@ def analyze_submissions(
                     dependencies.extend(extractor(task, candidates)["dependencies"])
                 publish(index)
     graph = build_graph(tasks, dependencies)
-    return graph_to_ui_data(graph)
+    result = graph_to_ui_data(graph)
+    if extractor is None:
+        from dependency_extraction import cache_namespace
+        result["analysis_engine"] = cache_namespace()
+    return result
 
 
 def main() -> None:

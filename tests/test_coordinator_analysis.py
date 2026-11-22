@@ -71,11 +71,11 @@ def test_unchanged_dependency_inputs_reuse_model_result(monkeypatch):
 
     calls = []
 
-    def extract(target, candidates):
-        calls.append((target["id"], [task["id"] for task in candidates]))
+    def extract(tasks):
+        calls.append(tasks)
         return {"dependencies": []}
 
-    monkeypatch.setattr(dependency_extraction, "extract_dependencies", extract)
+    monkeypatch.setattr(dependency_extraction, "extract_group_dependencies", extract)
     _dependency_cache.clear()
     submissions = [{"member_id": "dany", "events": [
         {"id": "a", "summary": "First", "description": "First task"},
@@ -85,9 +85,9 @@ def test_unchanged_dependency_inputs_reuse_model_result(monkeypatch):
         analyze_submissions(submissions)
         submissions[0]["events"][0]["end"] = {"date": "2026-11-24"}
         analyze_submissions(submissions)
-        assert len(calls) == 2
+        assert len(calls) == 1
         submissions[0]["events"][0]["description"] = "Changed first task"
         analyze_submissions(submissions)
-        assert len(calls) == 4
+        assert len(calls) == 2
     finally:
         _dependency_cache.clear()

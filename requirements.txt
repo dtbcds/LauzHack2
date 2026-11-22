@@ -1,6 +1,7 @@
 flet==1.1.2
 flet-desktop==1.1.2
-ollama
+openai==3.57.0
+python-dotenv==1.2.4
 pydantic
 pytest
 google-api-python-client

@@ -1,218 +1,120 @@
 import json
-import os
 from types import SimpleNamespace
 
 import pytest
-
 import dependency_extraction as extraction
 
-
-target = {
-    "id": "task_003",
-    "title": "Launch campaign",
-    "description": "Launch cannot proceed until the budget is approved.",
-    "owner": "Ari",
-    "deadline": "2026-12-01",
-}
-candidates = [
-    {
-        "id": "task_001",
-        "title": "Approve budget",
-        "description": "The budget is approved by finance.",
-        "owner": "Sam",
-        "deadline": "2026-11-25",
-    },
-    {
-        "id": "task_002",
-        "title": "Prepare audience research",
-        "description": "Audience research helps tailor the launch campaign.",
-        "owner": "Lee",
-        "deadline": "2026-11-27",
-    },
+TASKS = [
+    {'id': 'calendar:long:A', 'title': 'Report', 'description': 'Make the report', 'owner': 'nil'},
+    {'id': 'calendar:long:B', 'title': 'Presentation', 'description': 'Based on the report make a presentation', 'owner': 'dany'},
 ]
 
 
-def mock_response(monkeypatch, dependencies):
-    payload = {"target_task_id": "task_003", "dependencies": dependencies}
-    monkeypatch.setattr(
-        extraction.ollama,
-        "chat",
-        lambda **kwargs: SimpleNamespace(
-            message=SimpleNamespace(content=json.dumps(payload))
-        ),
-    )
+def edge(source='T1', target='T2', kind='hard', evidence='Based on the report make a presentation'):
+    return dict(prerequisite_task_id=source, dependent_task_id=target, type=kind, evidence=evidence)
 
 
-def dependency(task_id, kind, weight, evidence):
-    return {
-        "prerequisite_task_id": task_id,
-        "dependent_task_id": "task_003",
-        "type": kind,
-        "weight": weight,
-        "evidence": evidence,
-        "confidence": 0.95,
-    }
+def test_batch_maps_short_ids_and_preserves_evidence(monkeypatch):
+    seen = []
+    def request(tasks, schema):
+        seen.append((tasks, schema))
+        return {'dependencies': [edge(), edge()]}
+    monkeypatch.setattr(extraction, '_request', request)
+    result = extraction.extract_group_dependencies(TASKS)
+    assert len(seen) == 1
+    assert seen[0][1]['properties']['dependencies']['items']['properties']['dependent_task_id']['enum'] == ['T1', 'T2']
+    assert result['dependencies'] == [dict(prerequisite_task_id=TASKS[0]['id'], dependent_task_id=TASKS[1]['id'],
+                                         type='hard', weight=1.0, evidence=TASKS[1]['description'])]
+    assert 'confidence' not in result['dependencies'][0]
 
 
-def test_hard_dependency(monkeypatch):
-    mock_response(
-        monkeypatch,
-        [dependency("task_001", "hard", 1.0, "cannot proceed until the budget is approved")],
-    )
-    result = extraction.extract_dependencies(target, candidates)
-    assert result["dependencies"][0]["type"] == "hard"
+@pytest.mark.parametrize('change', [
+    {'prerequisite_task_id': 'invented'}, {'dependent_task_id': 'T1'},
+    {'type': 'invented'}, {'evidence': 'fabricated evidence'},
+])
+def test_invalid_links_fail_instead_of_silently_disappearing(monkeypatch, change):
+    monkeypatch.setattr(extraction, '_request', lambda tasks, schema: {'dependencies': [{**edge(), **change}]})
+    with pytest.raises(ValueError):
+        extraction.extract_group_dependencies(TASKS)
 
 
-def test_soft_dependency(monkeypatch):
-    mock_response(
-        monkeypatch,
-        [dependency("task_002", "soft", 0.5, "helps tailor the launch campaign")],
-    )
-    result = extraction.extract_dependencies(target, candidates)
-    assert result["dependencies"][0]["weight"] == 0.5
+def test_real_reciprocal_links_are_retained(monkeypatch):
+    tasks = [dict(id='A', description='Wait for B'), dict(id='B', description='Wait for A')]
+    monkeypatch.setattr(extraction, '_request', lambda tasks, schema: {'dependencies': [
+        edge('T2', 'T1', evidence='Wait for B'), edge('T1', 'T2', evidence='Wait for A'),
+    ]})
+    result = extraction.extract_group_dependencies(tasks)
+    assert len(result['dependencies']) == 2
 
 
-def test_no_dependency(monkeypatch):
-    mock_response(monkeypatch, [])
-    assert extraction.extract_dependencies(target, candidates)["dependencies"] == []
+def test_no_api_for_zero_or_one_task(monkeypatch):
+    def fail(*args):
+        raise AssertionError('Unexpected paid API call')
+    monkeypatch.setattr(extraction, '_request', fail)
+    assert extraction.extract_group_dependencies([]) == {'dependencies': []}
+    assert extraction.extract_group_dependencies(TASKS[:1]) == {'dependencies': []}
 
 
-def test_multiple_dependencies(monkeypatch):
-    mock_response(
-        monkeypatch,
-        [
-            dependency("task_001", "hard", 1.0, "cannot proceed until the budget is approved"),
-            dependency("task_002", "soft", 0.5, "helps tailor the launch campaign"),
-        ],
-    )
-    assert len(extraction.extract_dependencies(target, candidates)["dependencies"]) == 2
+def test_duplicate_ids_rejected():
+    with pytest.raises(ValueError, match='Duplicate'):
+        extraction.extract_group_dependencies([TASKS[0], TASKS[0]])
 
 
-def test_invalid_task_id_is_discarded(monkeypatch):
-    mock_response(
-        monkeypatch,
-        [dependency("invented_task", "hard", 1.0, "cannot proceed until the budget is approved")],
-    )
-    assert extraction.extract_dependencies(target, candidates)["dependencies"] == []
+def test_env_is_loaded_from_repo_without_changing_environment(tmp_path, monkeypatch):
+    monkeypatch.setattr(extraction, 'ROOT', tmp_path)
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    monkeypatch.delenv('OPENAI_MODEL', raising=False)
+    (tmp_path / '.env').write_text('OPENAI_API_KEY=local-test-key\nOPENAI_MODEL=test-model\n')
+    assert extraction.settings() == ('local-test-key', 'test-model')
+    monkeypatch.setenv('OPENAI_API_KEY', 'environment-test-key')
+    assert extraction.settings()[0] == 'environment-test-key'
 
 
-def test_malformed_response_reports_failure(monkeypatch):
-    monkeypatch.setattr(
-        extraction.ollama,
-        "chat",
-        lambda **kwargs: SimpleNamespace(message=SimpleNamespace(content="not json")),
-    )
-    with pytest.raises(RuntimeError, match="Dependency extraction failed"):
-        extraction.extract_dependencies(target, candidates)
+def test_request_uses_strict_schema_no_storage_and_omits_secret_from_input(monkeypatch):
+    captured = {}
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs['api_key'] == 'private-test-key'
+            self.responses = self
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(status='completed', output_text='{"dependencies": []}')
+    monkeypatch.setattr(extraction, 'OpenAI', Client)
+    monkeypatch.setattr(extraction, 'settings', lambda: ('private-test-key', 'gpt-4.1'))
+    extraction.extract_group_dependencies(TASKS)
+    assert captured['store'] is False
+    assert captured['text']['format']['strict'] is True
+    assert 'private-test-key' not in json.dumps(captured)
+    assert len(json.loads(captured['input'])['tasks']) == 2
 
 
-def test_malformed_candidate_and_duplicate_ids_are_rejected():
-    with pytest.raises(ValueError, match="Candidate tasks must be objects"):
-        extraction.extract_dependencies(target, [None])
-    with pytest.raises(ValueError, match="Duplicate candidate"):
-        extraction.extract_dependencies(target, [candidates[0], candidates[0]])
+def test_missing_key_is_actionable(monkeypatch):
+    monkeypatch.setattr(extraction, 'settings', lambda: ('', 'gpt-4.1'))
+    with pytest.raises(RuntimeError, match='OPENAI_API_KEY'):
+        extraction.extract_group_dependencies(TASKS)
 
 
-def task(task_id, title, description, owner="Ari"):
-    return {"id": task_id, "title": title, "description": description, "owner": owner}
+def test_html_is_normalized_for_evidence(monkeypatch):
+    tasks = [TASKS[0], {**TASKS[1], 'description': '<span>Based on the report make a presentation</span>'}]
+    def request(items, schema):
+        assert items[1]['description'] == TASKS[1]['description']
+        return {'dependencies': [edge()]}
+    monkeypatch.setattr(extraction, '_request', request)
+    assert extraction.extract_group_dependencies(tasks)['dependencies'][0]['type'] == 'hard'
 
 
-# Expected mapping: prerequisite ID -> dependency type. Empty means no dependency.
-LIVE_SCENARIOS = [
-    ("explicit hard", task("T", "Launch campaign", "Cannot launch until finance approves the budget."),
-     [task("A", "Approve budget", "Finance approves the campaign budget.", "Sam")], {"A": "hard"}),
-    ("implicit hard", task("T", "Integrate checkout", "Connect checkout to the production payment API endpoint."),
-     [task("A", "Build payment API", "Implement and publish the production payment API endpoint.", "Lee")], {"A": "hard"}),
-    ("explicit soft", task("T", "Draft campaign", "Audience interviews would help tailor the campaign, but drafting can start now."),
-     [task("A", "Interview audience", "Conduct audience interviews.", "Sam")], {"A": "soft"}),
-    ("implicit soft", task("T", "Write onboarding copy", "Write the first version of onboarding copy using the current product brief."),
-     [task("A", "Review tone", "Review product tone and suggest wording improvements for onboarding copy.", "Lee")], {"A": "soft"}),
-    ("unrelated", task("T", "Submit tax forms", "File the quarterly tax forms."),
-     [task("A", "Fix login", "Repair the mobile login screen.")], {}),
-    ("multiple hard", task("T", "Ship mobile release", "Release requires completed security sign-off and app store approval."),
-     [task("A", "Security sign-off", "Complete security sign-off.", "Sam"), task("B", "App store approval", "Obtain app store approval.", "Lee")], {"A": "hard", "B": "hard"}),
-    ("mixed", task("T", "Publish report", "Cannot publish before legal approval; a design review would improve readability but is optional."),
-     [task("A", "Legal approval", "Approve the report for publication.", "Sam"), task("B", "Design review", "Review report layout and suggest readability improvements.", "Lee")], {"A": "hard", "B": "soft"}),
-    ("different employees", task("T", "Deploy service", "Deploy after Sam merges the database migration.", "Ari"),
-     [task("A", "Merge migration", "Sam merges the database migration.", "Sam")], {"A": "hard"}),
-    ("similar names", task("T", "Launch Project Atlas website", "Publish the Atlas marketing website."),
-     [task("A", "Launch Project Atlas survey", "Send an independent customer survey for Atlas.")], {}),
-    ("shared employee", task("T", "Write sales deck", "Create a deck for the sales team.", "Ari"),
-     [task("A", "Update payroll", "Process monthly payroll.", "Ari")], {}),
-    ("ambiguous", task("T", "Prepare launch materials", "Coordinate with the analytics team as needed."),
-     [task("A", "Analytics dashboard", "Build a dashboard for launch metrics.", "Lee")], {}),
-    ("missing reference", task("T", "Publish handbook", "Wait for legal approval before publishing the handbook."),
-     [task("A", "Edit illustrations", "Polish handbook illustrations.", "Sam")], {}),
-    ("implicit hard artifact", task("T", "Print event badges", "Print badges with each registered attendee's name."),
-     [task("A", "Finalize attendee list", "Finalize the registered attendee list with names.", "Lee")], {"A": "hard"}),
-    ("cross employee soft", task("T", "Draft demo script", "Ari can draft now; Sam's customer notes may make the examples more relevant.", "Ari"),
-     [task("A", "Gather customer notes", "Sam collects customer notes for demo examples.", "Sam")], {"A": "soft"}),
-    ("same project meeting", task("T", "Configure billing", "Set up recurring billing for Project Nova."),
-     [task("A", "Nova kickoff meeting", "Hold the Project Nova kickoff meeting.", "Lee")], {}),
-]
-
-
-@pytest.mark.skipif(os.getenv("RUN_LIVE_OLLAMA") != "1", reason="set RUN_LIVE_OLLAMA=1")
-def test_live_qwen_scenarios(monkeypatch):
-    original_chat = extraction.ollama.chat
-    rows = []
-    for name, target_task, candidate_tasks, expected in LIVE_SCENARIOS:
-        raw = {}
-
-        def capture(**kwargs):
-            response = original_chat(**kwargs)
-            raw.update(json.loads(response.message.content))
-            return response
-
-        monkeypatch.setattr(extraction.ollama, "chat", capture)
-        result = extraction.extract_dependencies(target_task, candidate_tasks)
-        actual = {item["prerequisite_task_id"]: item["type"] for item in result["dependencies"]}
-        valid = all(
-            item["weight"] == {"hard": 1.0, "soft": 0.5}[item["type"]]
-            and item["evidence"] in target_task["description"] + " "
-            + next(t["description"] for t in candidate_tasks if t["id"] == item["prerequisite_task_id"])
-            and 0 <= item["confidence"] <= 1
-            for item in result["dependencies"]
-        )
-        rows.append({"scenario": name, "expected": expected, "actual": actual,
-                     "correct": actual == expected and valid, "raw": raw, "result": result})
-    for row in rows:
-        print(json.dumps(row, ensure_ascii=False))
-    totals = {kind: [0, 0] for kind in ("hard", "soft", "none")}
-    for row in rows:
-        if not row["expected"]:
-            totals["none"][1] += 1
-            totals["none"][0] += row["correct"]
-        for task_id, kind in row["expected"].items():
-            totals[kind][1] += 1
-            totals[kind][0] += row["actual"].get(task_id) == kind
-    print(json.dumps({"overall": [sum(row["correct"] for row in rows), len(rows)],
-                      "by_class": totals}))
-    assert all(row["correct"] for row in rows)
-
-
-def test_generation_schema_limits_ids_to_current_request(monkeypatch):
-    requests = []
-    def chat(**kwargs):
-        requests.append(kwargs)
-        message = json.loads(kwargs['messages'][0]['content'].split('Tasks:\n', 1)[1])
-        return SimpleNamespace(message=SimpleNamespace(content=json.dumps({
-            'target_task_id': message['target_task']['id'], 'dependencies': [],
-        })))
-    monkeypatch.setattr(extraction.ollama, 'chat', chat)
-    extraction.extract_dependencies(target, candidates)
-    extraction.extract_dependencies(candidates[0], [target])
-    props = requests[0]['format']['properties']
-    assert props['target_task_id']['enum'] == [target['id']]
-    fields = props['dependencies']['items']['properties']
-    assert fields['dependent_task_id']['enum'] == [target['id']]
-    assert fields['prerequisite_task_id']['enum'] == ['task_001', 'task_002']
-    assert requests[1]['format']['properties']['target_task_id']['enum'] == ['task_001']
-    assert 'enum' not in extraction.RESPONSE_SCHEMA['properties']['target_task_id']
-
-
-def test_no_candidates_does_not_call_model(monkeypatch):
-    def unexpected(**kwargs):
-        raise AssertionError('No model call needed')
-    monkeypatch.setattr(extraction.ollama, 'chat', unexpected)
-    assert extraction.extract_dependencies(target, []) == {'target_task_id': target['id'], 'dependencies': []}
+@pytest.mark.parametrize('status,text', [('incomplete', '{}'), ('completed', ''), ('completed', 'not json')])
+def test_incomplete_or_invalid_api_response_reports_failure(monkeypatch, status, text):
+    class Client:
+        def __init__(self, **kwargs): self.responses = self
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def create(self, **kwargs): return SimpleNamespace(status=status, output_text=text)
+    monkeypatch.setattr(extraction, 'OpenAI', Client)
+    monkeypatch.setattr(extraction, 'settings', lambda: ('private-test-key', 'gpt-4.1'))
+    with pytest.raises(RuntimeError):
+        extraction.extract_group_dependencies(TASKS)

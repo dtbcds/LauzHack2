@@ -284,8 +284,8 @@ def task_board(
             expand=True,
         )
 
-    blocking_column = task_column("Blocking", blocking_count, blocking_header, blocking_rows)
-    non_blocking_column = task_column("Non-blocking", non_blocking_count, non_blocking_header, non_blocking_rows)
+    blocking_column = task_column("Bottlenecks", blocking_count, blocking_header, blocking_rows)
+    non_blocking_column = task_column("Other tasks", non_blocking_count, non_blocking_header, non_blocking_rows)
     tables = ft.Container(expand=True)
     empty_message = ft.Text(size=p.CONTROL_TEXT, color=p.MUTED)
     empty_state = ft.Container(empty_message, padding=p.MEDIUM, expand=True)

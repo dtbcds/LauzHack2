@@ -63,7 +63,7 @@ def task_node(
 
     badges: list[ft.Control] = [p.tag(status)]
     if task.bottleneck and not completed:
-        badges.append(p.tag("Bottleneck", highlighted=True))
+        badges.append(p.tag("Potential bottleneck" if task.status == "unknown" else "Bottleneck", highlighted=True))
 
     border_color = p.DIVIDER if completed else p.AMBER if blocked_by else p.MUTED
     border_width = 2

@@ -47,8 +47,9 @@ def analysis_message(state: dict | None) -> str:
     result = state.get("result")
     progress = result.get("analysis_progress") if isinstance(result, dict) else None
     if status == "processing" and isinstance(progress, dict):
-        return (f"Building graph: {progress['completed']}/{progress['total']} tasks checked. "
-                "Links appear as they are found.")
+        return "Analysing group dependencies with OpenAI…" if progress['total'] == 1 else (
+            f"Building graph: {progress['completed']}/{progress['total']} tasks checked. "
+            "Links appear as they are found.")
     message = {
         "pending": "Analysis queued.", "processing": "Analysing Calendar events…",
         "failed": f"Analysis failed: {state.get('error') or 'Unknown error'}",

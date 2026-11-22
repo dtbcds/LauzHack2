@@ -261,34 +261,21 @@ class CoordinatorServerTests(unittest.TestCase):
         self.assertEqual(state["revision"], second)
         self.assertIsNone(state["result"])
 
-    def test_graph_links_are_published_before_analysis_finishes(self):
-        release_first = threading.Event()
-        release_second = threading.Event()
+    def test_items_appear_while_one_group_request_is_running(self):
+        release = threading.Event()
         self.server.analyzer = analyze_submissions
         _dependency_cache.clear()
-
-        def extract(target, _candidates):
-            if target["id"].endswith(":a"):
-                release_first.wait(timeout=2)
-                return {"dependencies": [{
-                    "prerequisite_task_id": "dany:primary:c",
-                    "dependent_task_id": target["id"], "type": "hard",
-                    "weight": 1.0, "evidence": "after C", "confidence": 0.9,
-                }]}
-            if target["id"].endswith(":b"):
-                release_second.wait(timeout=2)
-            return {"dependencies": []}
-
-        payload = {
-            "project_id": "demo", "collection_id": "round-1", "member_id": "dany",
-            "events": [
-                {"id": "a", "summary": "A", "description": "Do A after C"},
-                {"id": "b", "summary": "B", "description": "Do B"},
-                {"id": "c", "summary": "C", "description": "Do C"},
-            ],
-        }
+        def extract(tasks):
+            release.wait(timeout=2)
+            return {"dependencies": [{
+                "prerequisite_task_id": "dany:primary:c", "dependent_task_id": "dany:primary:a",
+                "type": "hard", "weight": 1.0, "evidence": "after C",
+            }]}
+        payload = {"project_id": "demo", "collection_id": "round-1", "member_id": "dany",
+                   "events": [{"id": "a", "summary": "A", "description": "Do A after C"},
+                              {"id": "c", "summary": "C", "description": "Do C"}]}
         try:
-            with patch("dependency_extraction.extract_dependencies", side_effect=extract):
+            with patch("dependency_extraction.extract_group_dependencies", side_effect=extract):
                 with self.post(payload) as response:
                     revision = json.load(response)["analysis_revision"]
                 deadline = time.monotonic() + 2
@@ -299,24 +286,14 @@ class CoordinatorServerTests(unittest.TestCase):
                         break
                     time.sleep(0.01)
                 self.assertEqual(state["status"], "processing")
-                self.assertEqual(len(progress["nodes"]), 3)
-                self.assertEqual(len(progress["edges"]), 0)
-                release_first.set()
-                deadline = time.monotonic() + 2
-                while time.monotonic() < deadline:
-                    state = self.server.store.get_analysis("demo", "round-1")
-                    progress = (state or {}).get("result") or {}
-                    if progress.get("analysis_progress", {}).get("completed") == 1:
-                        break
-                    time.sleep(0.01)
-                self.assertEqual(len(progress["edges"]), 1)
-                release_second.set()
+                self.assertEqual(len(progress["nodes"]), 2)
+                self.assertEqual(progress["analysis_progress"]["total"], 1)
+                release.set()
                 finished = self.wait_for_analysis(revision)
                 self.assertEqual(finished["status"], "ready")
                 self.assertEqual(len(finished["result"]["edges"]), 1)
         finally:
-            release_first.set()
-            release_second.set()
+            release.set()
             _dependency_cache.clear()
 
     def test_existing_submissions_are_analyzed_when_server_starts(self):

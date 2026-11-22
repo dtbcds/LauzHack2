@@ -70,7 +70,8 @@ the Windows or macOS build automatically.
 ## Shared group view
 
 See [group setup](app/calendar/GROUP.md) to upload each member’s Calendar and
-show the combined group on every computer, with local analysis on each.
+show the combined group on every computer, with OpenAI dependency inference and
+local graph construction on each.
 
 ## Personal Calendar on each computer
 
@@ -89,9 +90,8 @@ Google Tasks notes use the member's existing local OAuth token. Keep
 `credentials.json` in the repository root; Google may request authorization.
 The Windows custom Flutter client must already be built as described above.
 
-Items appear while analysis runs, and remain visible if the local model fails.
-For dependencies, run Ollama locally with the configured `DEPENDENCY_MODEL`
-(default `qwen3:8b`). Personal data is stored under a separate collection
+Items appear while analysis runs, and remain visible if the API request fails.
+Configure OpenAI as described below. Personal data is stored under a separate collection
 `personal:<member_id>/calendar`; no upload secret or HTTP server is required.
 This mode displays only your Calendar. Keep the separate upload client running
 if you also want to send snapshots to the group coordinator.
@@ -100,43 +100,56 @@ On macOS, set `RELAY_MODE=personal RELAY_MEMBER_ID=nil` before the launch comman
 To return to coordinator mode in PowerShell, run
 `$env:RELAY_MODE = "coordinator"` before launching again.
 
-## Fine-tune task dependency classification
+## OpenAI setup
 
-`train_dependency_model.py` fine-tunes the Hugging Face `Qwen/Qwen3-8B`
-checkpoint with 4-bit QLoRA. Training requires a CUDA GPU, its matching PyTorch
-build, and the packages in `requirements-train.txt`. Ollama's `qwen3:8b` is used
-for inference only; it is not a trainable checkpoint.
+Dependency inference now uses the OpenAI Responses API with Structured Outputs.
+Ollama, GGUF files, local model imports, and `DEPENDENCY_MODEL` are not used.
 
-Create separate UTF-8 JSONL files for training and validation. Each line is one
-target task with its complete candidate list and gold dependencies:
+1. Install dependencies: `python -m pip install -r requirements.txt`.
+2. Copy `.env.example` to `.env` in the repository root (unless `.env` already exists).
+3. Put your API key in `.env`:
 
-```json
-{"target_task":{"id":"T","title":"Launch","description":"Cannot launch until finance approves the budget."},"candidate_tasks":[{"id":"A","title":"Approve budget","description":"Finance approves the campaign budget."}],"dependencies":[{"prerequisite_task_id":"A","dependent_task_id":"T","type":"hard","weight":1.0,"evidence":"Cannot launch until finance approves the budget.","confidence":1.0}]}
+```dotenv
+OPENAI_API_KEY=your-api-key-here
+OPENAI_MODEL=gpt-4.1
 ```
 
-Use `[]` for no dependencies. Include only `hard` (weight `1.0`) and `soft`
-(weight `0.5`) labels. Evidence must be an exact substring of the target or
-corresponding candidate description. Keep related tasks in the same split to
-avoid leakage. Validation rejects unknown or duplicate candidate IDs, duplicate
-dependency labels, mismatched weights, and unsupported evidence.
+The app reads that file automatically, regardless of its launch directory.
+Environment variables override `.env`. The real `.env` is ignored by Git; only
+the empty `.env.example` is tracked. Keep your key in the local file rather than
+source code, terminal commands, Calendar descriptions, or the group upload.
+Each computer running analysis needs its own configured `.env`.
 
-```powershell
-python -m pip install -r requirements-train.txt
-python train_dependency_model.py validate data/train.jsonl data/validation.jsonl
-python train_dependency_model.py train --train data/train.jsonl --validation data/validation.jsonl --output runs/dependency-qwen3
-python train_dependency_model.py export --adapter runs/dependency-qwen3/adapter --output runs/dependency-qwen3/merged
-cd runs/dependency-qwen3/merged
-ollama create dependency-qwen3
-cd ../../..
-python train_dependency_model.py evaluate --data data/test.jsonl --model dependency-qwen3
+One request considers the whole group's titles, descriptions, and owners together.
+Request-local short IDs are mapped back to Calendar IDs. Only relevant task data
+is sent to OpenAI; Google tokens, secrets, and API keys are excluded from the input.
+Responses are requested with `store=False`, strict JSON schema, a 4096 output-token
+limit, a 60-second timeout, and at most one automatic retry for transient failures.
+An empty or single-task group needs no model request. Unchanged dependency inputs
+reuse an in-memory cache keyed by model, prompt, and schema. Deadline changes can
+recompute graph scores without another request in the same process.
+
+The app validates evidence and IDs, constructs the graph, and computes priorities
+and bottlenecks deterministically. Unknown Calendar completion status stays unknown;
+high-impact tasks can be marked as potential bottlenecks. Explicitly completed
+tasks are excluded. A genuine cycle remains an error; it is never silently removed.
+Each group UI makes its own requests, so running analysis on three computers uses
+more API credits than on one. Check API usage on the OpenAI platform.
+
+Restart the app after upgrading. Old Qwen group results are automatically scheduled
+for recomputation once with the configured OpenAI engine. Keep using the existing
+group launch commands; no Flutter rebuild or Google OAuth changes are required.
+
+Offline tests do not call OpenAI. To run the small paid regression set:
+
+```sh
+RUN_LIVE_OPENAI=1 .venv/bin/python -m pytest tests/test_dependency_direction_live.py -q -s
 ```
 
-Set `DEPENDENCY_MODEL=dependency-qwen3` before running the application or live
-extraction tests to use the imported model. Reserve a separate test file for
-the evaluation command; it reports per-class confusion and exact match. The
-export step merges in CPU memory and
-requires room for the full 8B model; Ollama imports the merged Safetensors
-directory through its generated `Modelfile`.
+On PowerShell, set `$env:RUN_LIVE_OPENAI = "1"` then run the Python pytest command.
+These tests cover independent tasks, ordinary chains, an implicit grading step,
+and a genuine circular dependency. Errors distinguish missing keys, authentication,
+network, quota, incomplete output, and validation failures.
 
 ## Desktop bottleneck notifications
 
@@ -151,7 +164,7 @@ scores = calculate_priority(graph)
 run_bottleneck_check(detect_bottlenecks(graph, scores))
 ```
 
-Pending bottlenecks with priority at least 75 and at least three downstream tasks
+Bottlenecks with priority at least 75 and at least three downstream tasks
 or two affected coworkers generate a native Windows toast or macOS notification.
 Successful sends are limited to one per task every four hours, including across
 restarts. Windows uses `winotify`; macOS uses the built-in `osascript` command.
